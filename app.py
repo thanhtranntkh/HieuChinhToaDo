@@ -25,9 +25,9 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("🌐 Công Cụ Hiệu Chỉnh Vị Trí Toạ Độ VN-2000")
-st.markdown("Xử lý chuyên dụng cho file **Hieu Chỉnh vị trí toa do VN200 cho phù hợp** (Tích hợp STT, Nối đầu-cuối & Dịch chuyển mốc)")
+st.markdown("Xử lý chuyên dụng cho file **Hieu Chỉnh vị trí toa do VN200 cho phù hợp** (Tích hợp Đảo trục X-Y, Quét ranh giới, STT, Nối đầu-cuối & Dịch chuyển)")
 
-# --- 1. CẤU HÌNH HỆ TỌA ĐỘ ---
+# --- 1. CẤU HÌNH HỆ TỌA ĐỘ (THEO QĐ 05/2007/QĐ-BTNMT) ---
 def get_vn2000_crs(kinh_tuyen_truc, mui=3):
     k_factor = 0.9999 if mui == 3 else 0.9996
     proj4_str = (
@@ -45,12 +45,12 @@ def convert_to_wgs84(x, y, kinh_tuyen_truc):
     lon, lat = transformer.transform(y, x) 
     return lat, lon
 
-# --- 2. THUẬT TOÁN KIỂM TRA LỖI & LÃNH THỔ ---
+# --- 2. THUẬT TOÁN KIỂM TRA LỖI & BIÊN GIỚI QUỐC GIA ---
 def analyze_data(df, kinh_tuyen_truc):
     df['Cảnh báo'] = ""
     
     swap_mask = df['X'] < df['Y']
-    df.loc[swap_mask, 'Cảnh báo'] += "⚠️ X, Y có thể bị đảo ngược. "
+    df.loc[swap_mask, 'Cảnh báo'] += "⚠️ X, Y có thể bị đảo ngược! "
 
     distances = [0.0]
     for i in range(1, len(df)):
@@ -68,10 +68,10 @@ def analyze_data(df, kinh_tuyen_truc):
         try:
             lat, lon = convert_to_wgs84(row['X'], row['Y'], kinh_tuyen_truc)
             if not (8.0 <= lat <= 24.0 and 102.0 <= lon <= 110.0):
-                df.at[idx, 'Cảnh báo'] += "🚨 Vượt ngoài lãnh thổ VN! "
+                df.at[idx, 'Cảnh báo'] += "🚨 Vượt ngoài lãnh thổ Việt Nam! "
                 out_of_bounds.append(idx)
         except:
-            df.at[idx, 'Cảnh báo'] += "🚨 Tọa độ lỗi! "
+            df.at[idx, 'Cảnh báo'] += "🚨 Lỗi tọa độ! "
             out_of_bounds.append(idx)
             
     return df, out_of_bounds
@@ -83,7 +83,6 @@ with st.sidebar:
     kinh_tuyen_truc = st.number_input("Kinh tuyến trục (VD: 108.25)", value=108.25, format="%.2f")
     loai_du_lieu = st.radio("Loại bản vẽ:", ["Tim tuyến (Polyline)", "Ranh GPMB (Polygon)"])
     
-    # Công cụ nối điểm đầu và cuối
     noi_dau_cuoi = st.checkbox("🔗 Tự động nối điểm đầu và điểm cuối (Khép kín ranh)", value=False)
 
 # --- 4. GIAO DIỆN CHÍNH ---
@@ -98,8 +97,6 @@ if uploaded_file:
             st.session_state['file_uploaded_name'] = uploaded_file.name
 
         current_df = st.session_state['df_current'].copy()
-
-        # Bổ sung cột STT (Thứ tự mốc) vào hiển thị
         current_df.insert(0, 'STT', range(1, len(current_df) + 1))
 
         df_analyzed, out_of_bounds_indices = analyze_data(current_df, kinh_tuyen_truc)
@@ -117,13 +114,12 @@ if uploaded_file:
             except:
                 pass
         
-        # Nếu bật tùy chọn nối điểm đầu và điểm cuối
         if noi_dau_cuoi and len(lat_lons) > 2:
             lat_lons.append(lat_lons[0])
 
         with col_map:
             st.subheader("🗺️ Bản đồ tương tác")
-            st.caption("👈 Mốc màu ĐỎ là mốc bị cảnh báo lỗi hoặc nằm ngoài lãnh thổ Việt Nam.")
+            st.caption("👈 Mốc màu ĐỎ là mốc bị cảnh báo lỗi, đảo trục X-Y hoặc văng ra ngoài biên giới.")
             
             if lat_lons:
                 center_lat = sum([pt[0] for pt in lat_lons]) / len(lat_lons)
@@ -162,38 +158,63 @@ if uploaded_file:
                 mask = df_display.astype(str).apply(lambda col: col.str.contains(search_query, case=False, na=False)).any(axis=1)
                 df_display = df_display[mask]
 
-            # --- CÔNG CỤ DI CHUYỂN MỐC (TỊNH TIẾN ĐỒNG LOẠT HOẶC THEO MỐC) ---
-            with st.expander("📐 Công cụ di chuyển / Tịnh tiến mốc (Shift)", expanded=False):
-                target_row_shift = st.selectbox("Chọn STT mốc cần dịch chuyển:", options=[None] + list(df_analyzed['STT']), format_func=lambda x: f"STT {x}" if x is not None else "-- Chọn mốc (Hoặc bỏ trống để dịch tất cả) --")
+            # --- CÔNG CỤ ĐẢO TRỤC TỌA ĐỘ X, Y ---
+            with st.expander("🔄 Công cụ Đảo tọa độ X và Y", expanded=True):
+                target_row_swap = st.selectbox("Chọn STT mốc cần đảo X-Y:", options=[None] + list(df_analyzed['STT']), format_func=lambda x: f"STT {x}" if x is not None else "-- Chọn mốc (Bỏ trống để đảo toàn bộ bảng) --")
+                if st.button("🔀 Thực hiện Đảo trục X và Y", type="primary"):
+                    if target_row_swap is not None:
+                        real_idx = df_analyzed[df_analyzed['STT'] == target_row_swap].index[0]
+                        val_x = st.session_state['df_current'].loc[real_idx, 'X']
+                        val_y = st.session_state['df_current'].loc[real_idx, 'Y']
+                        st.session_state['df_current'].loc[real_idx, 'X'] = val_y
+                        st.session_state['df_current'].loc[real_idx, 'Y'] = val_x
+                        st.success(f"Đã đảo trục X-Y cho mốc STT {target_row_swap} thành công!")
+                        st.rerun()
+                    else:
+                        # Đảo toàn bộ bảng
+                        temp_x = st.session_state['df_current']['X'].copy()
+                        st.session_state['df_current']['X'] = st.session_state['df_current']['Y']
+                        st.session_state['df_current']['Y'] = temp_x
+                        st.success("Đã đảo trục X và Y cho toàn bộ danh sách thành công!")
+                        st.rerun()
+
+            # --- CÔNG CỤ TỰ ĐỘNG QUÉT & XÓA MỐC NGOÀI LÃNH THỔ ---
+            with st.expander("🚨 Quét & Xóa mốc ngoài lãnh thổ", expanded=False):
+                if out_of_bounds_indices:
+                    st.warning(f"Phát hiện {len(out_of_bounds_indices)} mốc văng ra ngoài lãnh thổ Việt Nam!")
+                    if st.button("🧹 Tự động xóa sạch mốc ngoài lãnh thổ"):
+                        orig_indices_to_drop = df_analyzed.loc[out_of_bounds_indices].index.drop('STT', errors='ignore')
+                        st.session_state['df_current'] = st.session_state['df_current'].drop(index=orig_indices_to_drop).reset_index(drop=True)
+                        experimental_rerun = getattr(st, "rerun", None)
+                        if experimental_rerun:
+                            experimental_rerun()
+                else:
+                    st.success("✅ Tất cả các mốc nằm trong lãnh thổ Việt Nam.")
+
+            # --- CÔNG CỤ DI CHUYỂN / TỊNH TIẾN MỐC ---
+            with st.expander("📐 Công cụ dịch chuyển mốc (Shift)", expanded=False):
+                target_row_shift = st.selectbox("Chọn STT mốc cần dịch chuyển:", options=[None] + list(df_analyzed['STT']), format_func=lambda x: f"STT {x}" if x is not None else "-- Chọn mốc (Bỏ trống để dịch tất cả) --")
                 col_dx, col_dy = st.columns(2)
                 with col_dx:
                     delta_x = st.number_input("Cộng thêm vào X (ΔX):", value=0.0, format="%.3f")
                 with col_dy:
                     delta_y = st.number_input("Cộng thêm vào Y (ΔY):", value=0.0, format="%.3f")
                 
-                if st.button("🚀 Thực hiện dịch chuyển mốc", type="primary"):
+                if st.button("🚀 Thực hiện dịch chuyển"):
                     if target_row_shift is not None:
-                        # Dịch chuyển 1 mốc cụ thể
                         real_idx = df_analyzed[df_analyzed['STT'] == target_row_shift].index[0]
                         st.session_state['df_current'].loc[real_idx, 'X'] += delta_x
                         st.session_state['df_current'].loc[real_idx, 'Y'] += delta_y
                         st.success(f"Đã dịch chuyển mốc STT {target_row_shift} thành công!")
                         st.rerun()
                     else:
-                        # Dịch chuyển toàn bộ danh sách
                         st.session_state['df_current']['X'] += delta_x
                         st.session_state['df_current']['Y'] += delta_y
                         st.success("Đã tịnh tiến toàn bộ hệ thống tọa độ thành công!")
                         st.rerun()
 
-            # XÓA MỐC / CỤM MỐC
-            with st.expander("🗑️ Công cụ Xóa mốc / Cụm mốc", expanded=False):
-                if out_of_bounds_indices:
-                    if st.button("🧹 Xóa sạch mốc ngoài lãnh thổ VN"):
-                        orig_indices_to_drop = df_analyzed.loc[out_of_bounds_indices].index.drop('STT', errors='ignore')
-                        st.session_state['df_current'] = st.session_state['df_current'].drop(index=orig_indices_to_drop).reset_index(drop=True)
-                        st.rerun()
-                
+            # --- CÔNG CỤ XÓA MỐC THỦ CÔNG THEO STT ---
+            with st.expander("🗑️ Xóa mốc thủ công theo STT", expanded=False):
                 rows_to_delete = st.multiselect("Chọn STT các mốc cần xóa:", options=list(df_analyzed['STT']))
                 if st.button("🔥 Xóa các mốc đã chọn"):
                     if rows_to_delete:
@@ -224,7 +245,7 @@ if uploaded_file:
                 """, unsafe_allow_html=True)
 
             # BẢNG DỮ LIỆU EXCEL TRỰC TUYẾN
-            with st.container(height=350):
+            with st.container(height=300):
                 edited_df = st.data_editor(
                     df_display, 
                     num_rows="dynamic", 
@@ -235,7 +256,6 @@ if uploaded_file:
             # XUẤT FILE SAU KHI HIỆU CHỈNH
             st.markdown("---")
             output = io.BytesIO()
-            # Loại bỏ các cột phụ tính toán và cột STT giả lập trước khi xuất file gốc
             export_df = edited_df.drop(columns=['STT', 'Khoảng cách (m)', 'Cảnh báo'], errors='ignore')
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 export_df.to_excel(writer, index=False)
