@@ -3,20 +3,33 @@ import pandas as pd
 import numpy as np
 import pyproj
 import folium
-from folium import plugins # Bổ sung bộ Plugin mở rộng cho bản đồ
+from folium import plugins
 from streamlit_folium import st_folium
 import io
 
-# Cấu hình giao diện Web toàn màn hình
+# Cấu hình giao diện Web tràn viền tối đa
 st.set_page_config(layout="wide", page_title="Hiệu Chỉnh Tọa Độ VN-2000")
+
+# --- CSS TÙY CHỈNH ĐỂ BẢNG DỮ LIỆU LUÔN NỔI & ĐẸP ---
+st.markdown("""
+    <style>
+    .stDataFrame { width: 100%; }
+    .selected-point-box {
+        background-color: #e6f3ff;
+        border-left: 5px solid #0066cc;
+        padding: 15px;
+        border-radius: 5px;
+        margin-bottom: 15px;
+    }
+    </style>
+""", unsafe_allow_html=True)
 
 st.title("🌐 Công Cụ Hiệu Chỉnh Vị Trí Toạ Độ VN-2000")
 st.markdown("Xử lý chuyên dụng cho file **Hieu Chỉnh vị trí toa do VN200 cho phù hợp**")
 
-# --- 1. CẤU HÌNH HỆ TỌA ĐỘ THEO QUY ĐỊNH PHÁP LÝ ---
+# --- 1. CẤU HÌNH HỆ TỌA ĐỘ ---
 def get_vn2000_crs(kinh_tuyen_truc, mui=3):
     k_factor = 0.9999 if mui == 3 else 0.9996
-    # Tham số dịch chuyển gốc tọa độ: 191,90441429 m; -39,30318279 m; -111,45032835 m. Góc xoay và hệ số tỷ lệ.
     proj4_str = (
         f"+proj=tmerc +lat_0=0 +lon_0={kinh_tuyen_truc} +k={k_factor} "
         f"+x_0=500000 +y_0=0 +ellps=WGS84 "
@@ -45,26 +58,19 @@ def analyze_data(df, loai_du_lieu):
         dist = np.sqrt(dx**2 + dy**2)
         distances.append(round(dist, 2))
         if dist < 30 and dist > 0:
-            df.at[i, 'Cảnh báo'] += f"⚠️ Mốc trước quá gần ({dist}m). "
+            df.at[i, 'Cảnh báo'] += f"⚠️ Gần mốc trước ({dist}m). "
     
     df['Khoảng cách (m)'] = distances
-
-    if loai_du_lieu == "Ranh GPMB (Polygon)" and len(df) > 2:
-        first_pt = df.iloc[0]
-        last_pt = df.iloc[-1]
-        if abs(first_pt['X'] - last_pt['X']) > 0.1 or abs(first_pt['Y'] - last_pt['Y']) > 0.1:
-            df.at[df.index[-1], 'Cảnh báo'] += "⚠️ Điểm cuối chưa khép kín với điểm đầu. "
-
     return df
 
 # --- 3. THANH BÊN (SIDEBAR) ---
 with st.sidebar:
     st.header("⚙️ Thông số đầu vào")
     uploaded_file = st.file_uploader('Tải file "Hieu Chỉnh vị trí toa do VN200 cho phù hợp .xlsx"', type=['xlsx'])
-    kinh_tuyen_truc = st.number_input("Kinh tuyến trục (VD: 105.00)", value=108.25, format="%.2f")
+    kinh_tuyen_truc = st.number_input("Kinh tuyến trục (VD: 108.25)", value=108.25, format="%.2f")
     loai_du_lieu = st.radio("Loại bản vẽ:", ["Tim tuyến (Polyline)", "Ranh GPMB (Polygon)"])
 
-# --- 4. GIAO DIỆN CHÍNH (THIẾT KẾ MỚI TRÊN - DƯỚI) ---
+# --- 4. GIAO DIỆN CHÍNH (CHIA CỘT 75% BẢN ĐỒ - 25% DỮ LIỆU) ---
 if uploaded_file:
     raw_df = pd.read_excel(uploaded_file)
     
@@ -73,74 +79,107 @@ if uploaded_file:
     else:
         df_analyzed = analyze_data(raw_df.copy(), loai_du_lieu)
         
-        # BẢNG DỮ LIỆU NẰM TRÊN CÙNG CHIẾM CHIỀU RỘNG TỐI ĐA
-        st.subheader("📝 1. Bảng dữ liệu & Cảnh báo")
-        st.info("Kéo thả các hàng để sắp xếp thứ tự. Sửa số X, Y trực tiếp trong bảng và bản đồ bên dưới sẽ tự cập nhật.")
-        edited_df = st.data_editor(
-            df_analyzed, 
-            num_rows="dynamic", 
-            use_container_width=True, # Tràn viền
-            height=250,               # Giới hạn chiều cao để nhường chỗ cho bản đồ
-            disabled=["Khoảng cách (m)"]
-        )
+        # CHIA CỘT TỶ LỆ 3:1 (Bản đồ siêu lớn, Bảng dữ liệu vừa đủ)
+        col_map, col_data = st.columns([3, 1.2])
         
-        # BẢN ĐỒ CHIẾM KÍCH THƯỚC KHỔNG LỒ BÊN DƯỚI
-        st.subheader("🗺️ 2. Bản đồ tương tác")
-        st.caption("💡 Mẹo: Bấm vào biểu tượng **[ ]** ở góc phải bản đồ để phóng to Toàn màn hình.")
-        
+        # ---- XỬ LÝ DỮ LIỆU TỌA ĐỘ TRƯỚC KHI VẼ ----
         lat_lons = []
-        for idx, row in edited_df.iterrows():
+        valid_indices = [] # Lưu lại vị trí thực của các điểm không bị lỗi
+        for idx, row in df_analyzed.iterrows():
             try:
                 lat, lon = convert_to_wgs84(row['X'], row['Y'], kinh_tuyen_truc)
                 if not np.isnan(lat) and not np.isnan(lon):
                     lat_lons.append([lat, lon])
+                    valid_indices.append(idx)
             except:
                 pass
         
-        if lat_lons:
-            # Lấy trung tâm bản đồ
-            center_lat = sum([pt[0] for pt in lat_lons]) / len(lat_lons)
-            center_lon = sum([pt[1] for pt in lat_lons]) / len(lat_lons)
+        with col_map:
+            st.subheader("🗺️ Bản đồ tương tác")
+            st.caption("👈 Nhấp vào một điểm MÀU ĐỎ hoặc MÀU XANH trên bản đồ, dữ liệu sẽ tự động nhảy ở cột bên phải.")
             
-            m = folium.Map(location=[center_lat, center_lon], zoom_start=17, max_zoom=22)
-            folium.TileLayer('https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', attr='Google', name='Google Satellite').add_to(m)
-
-            # --- THÊM CÁC PLUGIN NÂNG CAO TRẢI NGHIỆM UX ---
-            plugins.Fullscreen(position='topright', title='Phóng to toàn màn hình', title_cancel='Thu nhỏ', force_separate_button=True).add_to(m)
-            plugins.MeasureControl(position='topleft', primary_length_unit='meters', secondary_length_unit='miles', primary_area_unit='sqmeters').add_to(m)
-            plugins.MousePosition(position='bottomright', separator=' | ', empty_string='NaN', lng_first=False, num_digits=6, prefix='Tọa độ WGS84:').add_to(m)
-
-            # Vẽ điểm và đường
-            for i, coord in enumerate(lat_lons):
-                is_warning = "⚠️" in str(edited_df.iloc[i].get('Cảnh báo', ''))
-                color = 'red' if is_warning else 'blue'
+            if lat_lons:
+                center_lat = sum([pt[0] for pt in lat_lons]) / len(lat_lons)
+                center_lon = sum([pt[1] for pt in lat_lons]) / len(lat_lons)
                 
-                folium.CircleMarker(
-                    location=coord, radius=7, color=color, fill=True, weight=2,
-                    tooltip=f"Điểm số {i+1} | X: {edited_df.iloc[i]['X']} | Y: {edited_df.iloc[i]['Y']}"
-                ).add_to(m)
+                m = folium.Map(location=[center_lat, center_lon], zoom_start=18, max_zoom=22)
+                folium.TileLayer('https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', attr='Google', name='Google Satellite').add_to(m)
+                
+                plugins.MeasureControl(position='topleft', primary_length_unit='meters').add_to(m)
 
-            if loai_du_lieu == "Tim tuyến (Polyline)":
-                folium.PolyLine(lat_lons, color="yellow", weight=5, opacity=0.9).add_to(m)
+                # Vẽ điểm
+                for i, coord in enumerate(lat_lons):
+                    idx_in_df = valid_indices[i]
+                    is_warning = "⚠️" in str(df_analyzed.iloc[idx_in_df].get('Cảnh báo', ''))
+                    color = 'red' if is_warning else 'blue'
+                    
+                    folium.CircleMarker(
+                        location=coord, radius=8, color=color, fill=True, weight=3,
+                        tooltip=f"Dòng {idx_in_df + 1} | X: {df_analyzed.iloc[idx_in_df]['X']}",
+                        popup=f"{idx_in_df}" # Lưu lại số thứ tự để Streamlit bắt sự kiện
+                    ).add_to(m)
+
+                if loai_du_lieu == "Tim tuyến (Polyline)":
+                    folium.PolyLine(lat_lons, color="yellow", weight=4).add_to(m)
+                else:
+                    folium.Polygon(lat_lons, color="orange", fill=True, fill_opacity=0.3, weight=3).add_to(m)
+
+                # RENDER BẢN ĐỒ (BẮT SỰ KIỆN CLICK)
+                map_data = st_folium(m, use_container_width=True, height=750, returned_objects=["last_object_clicked"])
+                
+        with col_data:
+            st.subheader("📝 Hiệu chỉnh dữ liệu")
+            
+            # --- XỬ LÝ SỰ KIỆN KHI NGƯỜI DÙNG CLICK LÊN BẢN ĐỒ ---
+            selected_row = None
+            if map_data and map_data.get("last_object_clicked"):
+                # Dùng thuật toán khoảng cách để dò tìm điểm vừa được click tương ứng với hàng nào trong Excel
+                clicked_lat = map_data["last_object_clicked"]["lat"]
+                clicked_lon = map_data["last_object_clicked"]["lng"]
+                
+                min_dist = float('inf')
+                for i, (lat, lon) in enumerate(lat_lons):
+                    dist = (lat - clicked_lat)**2 + (lon - clicked_lon)**2
+                    if dist < min_dist:
+                        min_dist = dist
+                        selected_row = valid_indices[i]
+            
+            # BẢNG THÔNG BÁO NỔI NẾU CÓ ĐIỂM ĐƯỢC CHỌN
+            if selected_row is not None:
+                st.markdown(f"""
+                <div class="selected-point-box">
+                    <strong>🎯 Mốc đang chọn: Dòng số {selected_row + 1}</strong><br>
+                    Giá trị X: <code>{df_analyzed.iloc[selected_row]['X']}</code><br>
+                    Giá trị Y: <code>{df_analyzed.iloc[selected_row]['Y']}</code><br>
+                    <span style="color:red; font-size: 13px;"><i>(Kéo bảng bên dưới tới dòng {selected_row + 1} để sửa)</i></span>
+                </div>
+                """, unsafe_allow_html=True)
             else:
-                folium.Polygon(lat_lons, color="orange", fill=True, fill_opacity=0.3, weight=3).add_to(m)
+                st.info("Nhấp vào một điểm trên bản đồ để xem chi tiết ở đây.")
 
-            # Render bản đồ với chiều cao siêu lớn (700px) và rộng 100%
-            st_folium(m, use_container_width=True, height=700)
-                
-        # --- 5. XUẤT FILE ---
-        st.markdown("---")
-        output = io.BytesIO()
-        export_df = edited_df.drop(columns=['Khoảng cách (m)', 'Cảnh báo'], errors='ignore')
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            export_df.to_excel(writer, index=False)
+            # VÙNG CHỨA BẢNG EXCEL (TỰ ĐỘNG CUỘN ĐỘC LẬP VỚI BẢN ĐỒ)
+            with st.container(height=550):
+                edited_df = st.data_editor(
+                    df_analyzed, 
+                    num_rows="dynamic", 
+                    use_container_width=True,
+                    disabled=["Khoảng cách (m)"]
+                )
             
-        st.download_button(
-            label="💾 Tải xuống file Hieu Chỉnh vị trí toa do VN200 cho phù hợp",
-            data=output.getvalue(),
-            file_name="Hieu_Chinh_vi_tri_toa_do_VN200_HoanThien.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            type="primary"
-        )
+            # XUẤT FILE NẰM GỌN BÊN DƯỚI BẢNG EXCEL
+            st.markdown("---")
+            output = io.BytesIO()
+            export_df = edited_df.drop(columns=['Khoảng cách (m)', 'Cảnh báo'], errors='ignore')
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                export_df.to_excel(writer, index=False)
+                
+            st.download_button(
+                label="💾 Xuất File Excel VN2000",
+                data=output.getvalue(),
+                file_name="Hieu_Chinh_vi_tri_toa_do_VN200_HoanThien.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
+                use_container_width=True
+            )
 else:
     st.info("Vui lòng tải lên file Excel để bắt đầu.")
