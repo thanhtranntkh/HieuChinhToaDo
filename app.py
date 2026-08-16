@@ -6,7 +6,13 @@ import folium
 from folium import plugins
 from streamlit_folium import st_folium
 import io
-from google import genai
+
+# Tích hợp Google GenAI an toàn (không bị sập app nếu chưa cài thư viện)
+try:
+    from google import genai
+    HAS_GENAI = True
+except ImportError:
+    HAS_GENAI = False
 
 # Tối ưu hóa cấu hình giao diện Streamlit
 st.set_page_config(layout="wide", page_title="Hiệu Chỉnh Tọa Độ VN-2000 Pro & AI Assistant")
@@ -72,7 +78,6 @@ def analyze_data(df, kinh_tuyen_truc):
     df = df.copy()
     df['Cảnh báo'] = ""
     
-    # Kiểm tra đảo trục X/Y
     swap_mask = df['X'] < df['Y']
     df.loc[swap_mask, 'Cảnh báo'] += "⚠️ Đảo trục X-Y! "
 
@@ -107,6 +112,8 @@ def analyze_data(df, kinh_tuyen_truc):
 
 # --- 3. HÀM TÍCH HỢP GEMINI AI PHÂN TÍCH HƯỚNG TRÁI / PHẢI ---
 def ask_gemini_for_direction(broken_info_text, kinh_tuyen_truc, api_key):
+    if not HAS_GENAI:
+        return "⚠️ Thư viện `google-genai` chưa được cài đặt trong môi trường Streamlit. Vui lòng kiểm tra lại file `requirements.txt`."
     if not api_key:
         return "⚠️ Vui lòng nhập Google Gemini API Key ở thanh bên (sidebar) để sử dụng tính năng phân tích thông minh."
     try:
@@ -273,17 +280,20 @@ if uploaded_file:
                 """, unsafe_allow_html=True)
                 
                 # Nút gọi Gemini AI phân tích Trái/Phải
-                if st.button("🤖 Nhờ Gemini AI phân tích Hướng Trái / Phải", type="primary", use_container_width=True):
-                    with st.spinner("Gemini đang phân tích hướng tuyến và không gian hình học..."):
-                        summary_text = ""
-                        for b in broken_segments[:15]:
-                            stt_from = b['from_idx'] + 1
-                            stt_to = b['to_idx'] + 1
-                            dist = b['distance']
-                            summary_text += f"- Đoạn từ STT {stt_from} đến STT {stt_to}: Khoảng cách đứt đoạn = {dist}m\n"
-                        
-                        ai_advice = ask_gemini_for_direction(summary_text, kinh_tuyen_truc, gemini_api_key)
-                        st.session_state['ai_advice'] = ai_advice
+                if st.button("🤖 Nhờ Gemini AI phân tích Hướng Trái / PHẢI", type="primary", use_container_width=True):
+                    if not HAS_GENAI:
+                        st.warning("⚠️ Thư viện `google-genai` chưa được cài trên server. Vui lòng thêm `google-genai` vào file `requirements.txt`.")
+                    else:
+                        with st.spinner("Gemini đang phân tích hướng tuyến và không gian hình học..."):
+                            summary_text = ""
+                            for b in broken_segments[:15]:
+                                stt_from = b['from_idx'] + 1
+                                stt_to = b['to_idx'] + 1
+                                dist = b['distance']
+                                summary_text += f"- Đoạn từ STT {stt_from} đến STT {stt_to}: Khoảng cách đứt đoạn = {dist}m\n"
+                            
+                            ai_advice = ask_gemini_for_direction(summary_text, kinh_tuyen_truc, gemini_api_key)
+                            st.session_state['ai_advice'] = ai_advice
                 
                 if 'ai_advice' in st.session_state:
                     with st.expander("💡 Phân tích & Đề xuất từ Gemini AI", expanded=True):
