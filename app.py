@@ -6,6 +6,7 @@ import folium
 from folium import plugins
 from streamlit_folium import st_folium
 import io
+from shapely.geometry import Point, Polygon
 
 # Cấu hình giao diện Web tràn viền tối đa
 st.set_page_config(layout="wide", page_title="Hiệu Chỉnh Tọa Độ VN-2000")
@@ -25,7 +26,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("🌐 Công Cụ Hiệu Chỉnh Vị Trí Toạ Độ VN-2000")
-st.markdown("Xử lý chuyên dụng cho file **Hieu Chỉnh vị trí toa do VN200 cho phù hợp** (Tích hợp quét cụm mốc đảo trục, quét ranh giới, STT & Nối đầu-cuối)")
+st.markdown("Xử lý chuyên dụng cho file **Hieu Chỉnh vị trí toa do VN200 cho phù hợp** (Tích hợp Quét & Tự động đảo trục mốc ngoài lãnh thổ)")
 
 # --- 1. CẤU HÌNH HỆ TỌA ĐỘ (THEO QĐ 05/2007/QĐ-BTNMT) ---
 def get_vn2000_crs(kinh_tuyen_truc, mui=3):
@@ -67,6 +68,7 @@ def analyze_data(df, kinh_tuyen_truc):
     for idx, row in df.iterrows():
         try:
             lat, lon = convert_to_wgs84(row['X'], row['Y'], kinh_tuyen_truc)
+            # Khung giới hạn lãnh thổ Việt Nam trên hệ WGS-84
             if not (8.0 <= lat <= 24.0 and 102.0 <= lon <= 110.0):
                 df.at[idx, 'Cảnh báo'] += "🚨 Vượt ngoài lãnh thổ Việt Nam! "
                 out_of_bounds.append(idx)
@@ -119,7 +121,7 @@ if uploaded_file:
 
         with col_map:
             st.subheader("🗺️ Bản đồ tương tác & Quét vùng")
-            st.caption("💡 Sử dụng công cụ hình chữ nhật hoặc đa giác ở góc trái bản đồ để **quét chọn một cụm mốc** cần đảo trục.")
+            st.caption("💡 Khoanh vùng các mốc bị văng ra ngoài lãnh thổ để xử lý đảo trục nhanh.")
             
             if lat_lons:
                 center_lat = sum([pt[0] for pt in lat_lons]) / len(lat_lons)
@@ -128,17 +130,9 @@ if uploaded_file:
                 m = folium.Map(location=[center_lat, center_lon], zoom_start=18, max_zoom=22)
                 folium.TileLayer('https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', attr='Google', name='Google Satellite').add_to(m)
                 
-                # Bổ sung công cụ vẽ vùng quét (Draw Control) lên bản đồ
                 draw = plugins.Draw(
                     export=False,
-                    draw_options={
-                        'polyline': False,
-                        'polygon': True,
-                        'rectangle': True,
-                        'circle': False,
-                        'marker': False,
-                        'circlemarker': False
-                    },
+                    draw_options={'polyline': False, 'polygon': True, 'rectangle': True, 'circle': False, 'marker': False, 'circlemarker': False},
                     edit_options={'edit': False}
                 )
                 draw.add_to(m)
@@ -162,7 +156,6 @@ if uploaded_file:
                 else:
                     folium.Polygon(lat_lons, color="orange", fill=True, fill_opacity=0.3, weight=3).add_to(m)
 
-                # Bắt sự kiện vẽ vùng (geometry) và click điểm
                 map_data = st_folium(m, use_container_width=True, height=750, returned_objects=["last_active_drawing", "last_object_clicked"])
                 
         with col_data:
@@ -174,20 +167,21 @@ if uploaded_file:
                 mask = df_display.astype(str).apply(lambda col: col.str.contains(search_query, case=False, na=False)).any(axis=1)
                 df_display = df_display[mask]
 
-            # --- CÔNG CỤ ĐẢO TRỤC TỌA ĐỘ X, Y (HỖ TRỢ QUÉT VÙNG HOẶC CHỌN THỦ CÔNG) ---
+            # --- TÍNH NĂNG ĐẢO TRỤC X, Y (HỖ TRỢ TỰ ĐỘNG ĐẢO MỐC NGOÀI LÃNH THỔ & QUÉT VÙNG) ---
             with st.expander("🔄 Công cụ Đảo tọa độ X và Y", expanded=True):
-                # Kiểm tra xem người dùng có vừa dùng công cụ vẽ hình chữ nhật/đa giác trên bản đồ để quét cụm mốc không
+                # Quét xem có mốc nào nằm trong vùng vẽ hình trên bản đồ không
                 swept_indices = []
                 if map_data and map_data.get("last_active_drawing"):
                     geom = map_data["last_active_drawing"]["geometry"]
                     if geom["type"] == "Polygon":
-                        coords_polygon = geom["coordinates"][0] # [[lon, lat], ...]
-                        # Kiểm tra xem các mốc nào nằm trong vùng đa giác được vẽ
-                        from shapely.geometry import Point, Polygon
+                        coords_polygon = geom["coordinates"][0]
                         poly = Polygon(coords_polygon)
+                        for i, (lat, lon) in enumerate(lat_lons[:-1] if noi_dau_cuoi and len(lat_lons) > 2 else lat_lons):
+                            if poly.contains(Point(lon, lat)):
+                                real_idx = valid_indices[i] if i < len(valid_indices) else valid_indices[0]
+                                stt_matched = df_analyzed.loc[df_analyzed.index == real_idx, 'STT'].values[0]
                         
                         for i, (lat, lon) in enumerate(lat_lons[:-1] if noi_dau_cuoi and len(lat_lons) > 2 else lat_lons):
-                            # Lưu ý: shapely dùng (lon, lat)
                             if poly.contains(Point(lon, lat)):
                                 real_idx = valid_indices[i] if i < len(valid_indices) else valid_indices[0]
                                 stt_matched = df_analyzed.loc[df_analyzed.index == real_idx, 'STT'].values[0]
@@ -196,13 +190,30 @@ if uploaded_file:
                 if swept_indices:
                     st.success(f"🎯 Đã quét chọn được cụm gồm {len(swept_indices)} mốc (STT: {', '.join(map(str, swept_indices))}) qua bản đồ!")
 
+                # Nút hỗ trợ nhanh: Đảo trục tất cả các mốc đang bị lỗi vượt biên giới
+                if out_of_bounds_indices:
+                    out_of_bounds_stts = df_analyzed.loc[df_analyzed.index.isin(out_of_bounds_indices), 'STT'].tolist()
+                    st.warning(f"⚠️ Phát hiện {len(out_of_bounds_indices)} mốc ngoài biên giới (STT: {out_of_bounds_stts}). Có thể do nhầm trục X-Y.")
+                    if st.button("🔄 Tự động Đảo trục X-Y cho các mốc ngoài biên giới", type="primary"):
+                        for idx_err in out_of_bounds_indices:
+                            # Lấy index gốc của session state
+                            orig_idx = df_analyzed.loc[idx_err].name if hasattr(df_analyzed.loc[idx_err], 'name') else idx_err
+                            # Nếu dòng đó có trong session state thì tiến hành đổi chỗ X và Y
+                            if orig_idx in st.session_state['df_current'].index:
+                                val_x = st.session_state['df_current'].loc[orig_idx, 'X']
+                                val_y = st.session_state['df_current'].loc[orig_idx, 'Y']
+                                st.session_state['df_current'].loc[orig_idx, 'X'] = val_y
+                                st.session_state['df_current'].loc[orig_idx, 'Y'] = val_x
+                        st.success("Đã tự động đảo trục X-Y đưa các mốc ngoài biên giới về lại lãnh thổ VN thành công!")
+                        st.rerun()
+
                 target_row_swap = st.selectbox(
-                    "Chọn STT mốc cần đảo X-Y:", 
+                    "Chọn tùy chọn đảo trục:", 
                     options=[None, "QUÉT_VÙNG_TRÊN_BẢN_ĐỒ"] + list(df_analyzed['STT']), 
-                    format_func=lambda x: f"📦 Đảo tất cả các mốc vừa QUÉT TRÊN BẢN ĐỒ ({len(swept_indices)} mốc)" if x == "QUÉT_VÙNG_TRÊN_BẢN_ĐỒ" else (f"STT {x}" if x is not None else "-- Chọn mốc (Hoặc bỏ trống để đảo toàn bộ bảng) --")
+                    format_func=lambda x: f"📦 Đảo tất cả các mốc vừa QUÉT TRÊN BẢN ĐỒ ({len(swept_indices)} mốc)" if x == "QUÉT_VÙNG_TRÊN_BẢN_ĐỒ" else (f"STT {x}" if x is not None else "-- Chọn mốc thủ công (Hoặc bỏ trống để đảo toàn bộ bảng) --")
                 )
                 
-                if st.button("🔀 Thực hiện Đảo trục X và Y", type="primary"):
+                if st.button("🔀 Thực hiện Đảo trục X-Y", type="secondary"):
                     if target_row_swap == "QUÉT_VÙNG_TRÊN_BẢN_ĐỒ" and swept_indices:
                         for stt_val in swept_indices:
                             real_idx = df_analyzed[df_analyzed['STT'] == stt_val].index[0]
@@ -227,10 +238,9 @@ if uploaded_file:
                         st.success("Đã đảo trục X và Y cho toàn bộ danh sách thành công!")
                         st.rerun()
 
-            # --- CÔNG CỤ TỰ ĐỘNG QUÉT & XÓA MỐC NGOÀI LÃNH THỔ ---
+            # --- CÔNG CỤ XÓA MỐC NGOÀI LÃNH THỔ ---
             with st.expander("🚨 Quét & Xóa mốc ngoài lãnh thổ", expanded=False):
                 if out_of_bounds_indices:
-                    st.warning(f"Phát hiện {len(out_of_bounds_indices)} mốc văng ra ngoài lãnh thổ Việt Nam!")
                     if st.button("🧹 Tự động xóa sạch mốc ngoài lãnh thổ"):
                         orig_indices_to_drop = df_analyzed.loc[out_of_bounds_indices].index.drop('STT', errors='ignore')
                         st.session_state['df_current'] = st.session_state['df_current'].drop(index=orig_indices_to_drop).reset_index(drop=True)
@@ -256,7 +266,7 @@ if uploaded_file:
                         st.rerun()
                     else:
                         st.session_state['df_current']['X'] += delta_x
-                        st.session_state['df_current']['Y'] += delta_y
+                        st.session_state['df_current'].loc[real_idx, 'Y'] += delta_y
                         st.success("Đã tịnh tiến toàn bộ hệ thống tọa độ thành công!")
                         st.rerun()
 
