@@ -113,7 +113,7 @@ def analyze_data(df, kinh_tuyen_truc):
 # --- 3. HÀM TÍCH HỢP GEMINI AI PHÂN TÍCH HƯỚNG TRÁI / PHẢI ---
 def ask_gemini_for_direction(broken_info_text, kinh_tuyen_truc, api_key):
     if not HAS_GENAI:
-        return "⚠️ Thư viện `google-genai` chưa được cài đặt trong môi trường Streamlit. Vui lòng kiểm tra lại file `requirements.txt`."
+        return "⚠️ Thư viện `google-genai` chưa được cài đặt trong môi trường Streamlit. Vui lòng thêm `google-genai` vào file `requirements.txt`."
     if not api_key:
         return "⚠️ Vui lòng nhập Google Gemini API Key ở thanh bên (sidebar) để sử dụng tính năng phân tích thông minh."
     try:
@@ -280,7 +280,7 @@ if uploaded_file:
                 """, unsafe_allow_html=True)
                 
                 # Nút gọi Gemini AI phân tích Trái/Phải
-                if st.button("🤖 Nhờ Gemini AI phân tích Hướng Trái / PHẢI", type="primary", use_container_width=True):
+                if st.button("🤖 Nhờ Gemini AI phân tích Hướng Trái / Phải", type="primary", use_container_width=True):
                     if not HAS_GENAI:
                         st.warning("⚠️ Thư viện `google-genai` chưa được cài trên server. Vui lòng thêm `google-genai` vào file `requirements.txt`.")
                     else:
