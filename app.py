@@ -46,7 +46,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("🌐 Công Cụ Hiệu Chỉnh, Sắp Xếp Tọa Độ VN-2000 & Trợ Lý AI")
-st.markdown("Hỗ trợ click chọn mốc trực tiếp trên bản đồ, tự động sắp xếp lý trình tuyến và phân tích hướng trái/phải bằng Google Gemini AI.")
+st.markdown("Hỗ trợ click chọn mốc trên bản đồ, tự động kiểm tra đảo trục X/Y, đứt đoạn, sắp xếp lý trình và phân tích trái/phải bằng Google Gemini AI.")
 
 # --- 1. CẤU HÌNH HỆ TỌA ĐỘ VN-2000 ---
 @st.cache_resource
@@ -67,16 +67,17 @@ def convert_to_wgs84_vectorized(x_arr, y_arr, kinh_tuyen_truc):
     lons, lats = transformer.transform(y_arr, x_arr)
     return lats, lons
 
-# --- 2. THUẬT TOÁN PHÁT HIỆN ĐỨT ĐOẠN ---
+# --- 2. THUẬT TOÁN PHÁT HIỆN LỖI (ĐẢO TRỤC, LẶP, ĐỨT ĐOẠN) ---
 def analyze_data(df, kinh_tuyen_truc):
     df = df.copy()
     df['Cảnh báo'] = ""
     
-    dup_mask = df.duplicated(subset=['X', 'Y'], keep=False)
-    df.loc[dup_mask, 'Cảnh báo'] += "⚠️ Lặp tọa độ! "
-
+    # Kiểm tra đảo trục X/Y
     swap_mask = df['X'] < df['Y']
     df.loc[swap_mask, 'Cảnh báo'] += "⚠️ Đảo trục X-Y! "
+
+    dup_mask = df.duplicated(subset=['X', 'Y'], keep=False)
+    df.loc[dup_mask, 'Cảnh báo'] += "⚠️ Lặp tọa độ! "
 
     x_vals = df['X'].to_numpy()
     y_vals = df['Y'].to_numpy()
@@ -88,6 +89,12 @@ def analyze_data(df, kinh_tuyen_truc):
     df['Khoảng cách (m)'] = np.round(distances, 2)
     
     broken_segments = []
+    swapped_points = []
+    
+    for i in range(len(df)):
+        if df.at[i, 'X'] < df.at[i, 'Y']:
+            swapped_points.append(i + 1)
+            
     for i in range(1, len(df)):
         dist = distances[i]
         if dist > 200: 
@@ -96,7 +103,7 @@ def analyze_data(df, kinh_tuyen_truc):
         elif 0 < dist < 30:
             df.at[i, 'Cảnh báo'] += f"⚠️ Quá gần ({dist}m). "
             
-    return df, broken_segments
+    return df, broken_segments, swapped_points
 
 # --- 3. HÀM TÍCH HỢP GEMINI AI PHÂN TÍCH HƯỚNG TRÁI / PHẢI ---
 def ask_gemini_for_direction(broken_info_text, kinh_tuyen_truc, api_key):
@@ -155,7 +162,7 @@ if uploaded_file:
 
         name_col = next((col for col in current_df.columns if any(k in col.lower() for k in ['hiệu', 'tên', 'mã', 'số', 'id'])), None)
 
-        df_analyzed, broken_segments = analyze_data(current_df, kinh_tuyen_truc)
+        df_analyzed, broken_segments, swapped_points = analyze_data(current_df, kinh_tuyen_truc)
         df_display = df_analyzed.copy()
         if name_col and name_col in df_display.columns:
             cols = ['STT', name_col, 'X', 'Y', 'Khoảng cách (m)', 'Cảnh báo']
@@ -238,6 +245,26 @@ if uploaded_file:
         with col_data:
             st.subheader("📝 Công cụ Hiệu chỉnh & AI")
             
+            # --- HIỂN THỊ CẢNH BÁO ĐẢO TRỤC X/Y ---
+            if swapped_points:
+                st.markdown(f"""
+                <div class="alert-box">
+                    <strong>⚠️ PHÁT HIỆN {len(swapped_points)} MỐC ĐẢO TRỤC X/Y!</strong><br>
+                    Các STT bị đảo trục: {swapped_points[:10]}{'...' if len(swapped_points)>10 else ''}
+                </div>
+                """, unsafe_allow_html=True)
+                
+                if st.button("🔄 Tự động hoán đổi lại X và Y cho các mốc này", use_container_width=True):
+                    current_raw = st.session_state['df_current'].copy()
+                    for pt in swapped_points:
+                        idx = pt - 1
+                        temp_val = current_raw.at[idx, 'X']
+                        current_raw.at[idx, 'X'] = current_raw.at[idx, 'Y']
+                        current_raw.at[idx, 'Y'] = temp_val
+                    st.session_state['df_current'] = current_raw
+                    st.success("Đã hoán đổi thành công tọa độ X và Y cho các mốc bị lỗi!")
+                    st.rerun()
+
             if broken_segments:
                 st.markdown(f"""
                 <div class="alert-box">
@@ -262,11 +289,12 @@ if uploaded_file:
                     with st.expander("💡 Phân tích & Đề xuất từ Gemini AI", expanded=True):
                         st.markdown(st.session_state['ai_advice'])
             else:
-                st.markdown("""
-                <div class="success-box">
-                    <strong>✅ Tuyến liền mạch!</strong>
-                </div>
-                """, unsafe_allow_html=True)
+                if not swapped_points:
+                    st.markdown("""
+                    <div class="success-box">
+                        <strong>✅ Tuyến liền mạch và chuẩn hóa!</strong>
+                    </div>
+                    """, unsafe_allow_html=True)
 
             st.markdown("---")
             st.write("🎯 **Trạng thái chọn mốc tương tác:**")
