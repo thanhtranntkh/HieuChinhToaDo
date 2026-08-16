@@ -287,7 +287,6 @@ if uploaded_file:
                         df_raw = st.session_state['df_current'].copy()
                         pts = df_raw[['X', 'Y']].to_numpy()
                         if len(pts) > 2:
-                            # Thuật toán Nearest Neighbor TSP-like cho chuỗi tuyến hở
                             unvisited = set(range(1, len(pts)))
                             current = 0
                             new_order = [0]
@@ -311,6 +310,7 @@ if uploaded_file:
             
             # -------------------------------------------------------------
             # MODULE NÂNG CẤP: SẮP XẾP & DỜI NHIỀU MỐC CÙNG LÚC
+            # ĐÃ FIX LỖI KEYERROR
             # -------------------------------------------------------------
             with st.expander("🚀 Sắp xếp & Dời NHIỀU MỐC cùng lúc", expanded=True):
                 st.caption("Chọn nhiều mốc và dời chúng về trước hoặc sau một mốc đích, kèm tùy chọn thứ tự sắp xếp.")
@@ -337,32 +337,34 @@ if uploaded_file:
                     elif target_point in points_to_move:
                         st.warning("Mốc đích không được nằm trong danh sách các mốc cần dời!")
                     else:
-                        current_raw = st.session_state['df_current'].copy()
+                        # FIX: Lấy current_df thay vì current_raw để đảm bảo đã có sẵn cột 'STT'
+                        temp_df = current_df.copy()
                         
-                        # Tách ra các mốc cần dời
-                        rows_to_move = current_raw[current_raw['STT'].isin(points_to_move)].copy()
+                        # Lọc ra các dòng cần dời
+                        rows_to_move = temp_df[temp_df['STT'].isin(points_to_move)].copy()
                         
-                        # Áp dụng sắp xếp cho các mốc này (Nhỏ -> Lớn hoặc Lớn -> Nhỏ)
+                        # Sắp xếp các mốc được dời
                         ascending = True if sort_order == "Từ nhỏ đến lớn" else False
                         rows_to_move = rows_to_move.sort_values(by='STT', ascending=ascending)
                         
-                        # Xóa các mốc cần dời khỏi Dataframe gốc
-                        current_raw = current_raw[~current_raw['STT'].isin(points_to_move)].reset_index(drop=True)
+                        # Xóa các mốc cần dời khỏi Dataframe tạm
+                        temp_df = temp_df[~temp_df['STT'].isin(points_to_move)].reset_index(drop=True)
                         
-                        # Tìm vị trí index mới của mốc đích (sau khi đã xóa đi các mốc phía trên)
-                        target_idx = current_raw[current_raw['STT'] == target_point].index[0]
-                        
-                        # Xác định index để chèn vào Dataframe
+                        # Tìm vị trí index mới của mốc đích
+                        target_idx = temp_df[temp_df['STT'] == target_point].index[0]
                         insert_idx = target_idx if position == "Đứng TRƯỚC mốc đích" else target_idx + 1
                         
-                        # Cắt Dataframe và chèn mảng mới vào giữa
-                        part1 = current_raw.iloc[:insert_idx]
-                        part2 = current_raw.iloc[insert_idx:]
+                        # Tách Dataframe và ghép mảng mốc cần dời vào giữa
+                        part1 = temp_df.iloc[:insert_idx]
+                        part2 = temp_df.iloc[insert_idx:]
                         
-                        st.session_state['df_current'] = pd.concat([part1, rows_to_move, part2]).reset_index(drop=True)
+                        combined = pd.concat([part1, rows_to_move, part2]).reset_index(drop=True)
+                        
+                        # FIX: Cập nhật lại session_state và bỏ đi cột STT để tránh lỗi lặp
+                        st.session_state['df_current'] = combined.drop(columns=['STT'], errors='ignore')
                         st.success(f"Đã dời thành công {len(points_to_move)} mốc đến vị trí yêu cầu!")
                         
-                        # Reset lựa chọn trên bản đồ
+                        # Đặt lại các biến bản đồ
                         st.session_state['selected_point_a'] = None
                         st.session_state['selected_point_b'] = None
                         st.rerun()
