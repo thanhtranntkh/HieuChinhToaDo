@@ -25,7 +25,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("🌐 Công Cụ Hiệu Chỉnh Vị Trí Toạ Độ VN-2000")
-st.markdown("Xử lý chuyên dụng cho file **Hieu Chỉnh vị trí toa do VN200 cho phù hợp** (Tích hợp Quét mốc ngoài lãnh thổ & Xóa cụm)")
+st.markdown("Xử lý chuyên dụng cho file **Hieu Chỉnh vị trí toa do VN200 cho phù hợp** (Tích hợp STT, Nối đầu-cuối & Dịch chuyển mốc)")
 
 # --- 1. CẤU HÌNH HỆ TỌA ĐỘ ---
 def get_vn2000_crs(kinh_tuyen_truc, mui=3):
@@ -49,7 +49,6 @@ def convert_to_wgs84(x, y, kinh_tuyen_truc):
 def analyze_data(df, kinh_tuyen_truc):
     df['Cảnh báo'] = ""
     
-    # Kiểm tra đảo ngược X, Y
     swap_mask = df['X'] < df['Y']
     df.loc[swap_mask, 'Cảnh báo'] += "⚠️ X, Y có thể bị đảo ngược. "
 
@@ -64,7 +63,6 @@ def analyze_data(df, kinh_tuyen_truc):
     
     df['Khoảng cách (m)'] = distances
 
-    # Kiểm tra mốc có nằm ngoài phạm vi lãnh thổ Việt Nam hay không (Lat: 8.0 - 24.0, Lon: 102.0 - 110.0)
     out_of_bounds = []
     for idx, row in df.iterrows():
         try:
@@ -73,7 +71,7 @@ def analyze_data(df, kinh_tuyen_truc):
                 df.at[idx, 'Cảnh báo'] += "🚨 Vượt ngoài lãnh thổ VN! "
                 out_of_bounds.append(idx)
         except:
-            df.at[idx, 'Cảnh báo'] += "🚨 Tọa độ lỗi không dịch chuyển được! "
+            df.at[idx, 'Cảnh báo'] += "🚨 Tọa độ lỗi! "
             out_of_bounds.append(idx)
             
     return df, out_of_bounds
@@ -84,6 +82,9 @@ with st.sidebar:
     uploaded_file = st.file_uploader('Tải file "Hieu Chỉnh vị trí toa do VN200 cho phù hợp .xlsx"', type=['xlsx'])
     kinh_tuyen_truc = st.number_input("Kinh tuyến trục (VD: 108.25)", value=108.25, format="%.2f")
     loai_du_lieu = st.radio("Loại bản vẽ:", ["Tim tuyến (Polyline)", "Ranh GPMB (Polygon)"])
+    
+    # Công cụ nối điểm đầu và cuối
+    noi_dau_cuoi = st.checkbox("🔗 Tự động nối điểm đầu và điểm cuối (Khép kín ranh)", value=False)
 
 # --- 4. GIAO DIỆN CHÍNH ---
 if uploaded_file:
@@ -92,16 +93,19 @@ if uploaded_file:
     if 'X' not in raw_df.columns or 'Y' not in raw_df.columns:
         st.error("File phải có cột 'X' và 'Y'.")
     else:
-        # Khởi tạo Session State quản lý dữ liệu
         if 'df_current' not in st.session_state or st.session_state.get('file_uploaded_name') != uploaded_file.name:
             st.session_state['df_current'] = raw_df.copy()
             st.session_state['file_uploaded_name'] = uploaded_file.name
 
-        df_analyzed, out_of_bounds_indices = analyze_data(st.session_state['df_current'].copy(), kinh_tuyen_truc)
+        current_df = st.session_state['df_current'].copy()
+
+        # Bổ sung cột STT (Thứ tự mốc) vào hiển thị
+        current_df.insert(0, 'STT', range(1, len(current_df) + 1))
+
+        df_analyzed, out_of_bounds_indices = analyze_data(current_df, kinh_tuyen_truc)
         
         col_map, col_data = st.columns([3, 1.2])
         
-        # Xử lý tọa độ vẽ bản đồ
         lat_lons = []
         valid_indices = []
         for idx, row in df_analyzed.iterrows():
@@ -113,6 +117,10 @@ if uploaded_file:
             except:
                 pass
         
+        # Nếu bật tùy chọn nối điểm đầu và điểm cuối
+        if noi_dau_cuoi and len(lat_lons) > 2:
+            lat_lons.append(lat_lons[0])
+
         with col_map:
             st.subheader("🗺️ Bản đồ tương tác")
             st.caption("👈 Mốc màu ĐỎ là mốc bị cảnh báo lỗi hoặc nằm ngoài lãnh thổ Việt Nam.")
@@ -125,18 +133,17 @@ if uploaded_file:
                 folium.TileLayer('https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', attr='Google', name='Google Satellite').add_to(m)
                 plugins.MeasureControl(position='topleft', primary_length_unit='meters').add_to(m)
 
-                for i, coord in enumerate(lat_lons):
-                    idx_in_df = valid_indices[i]
-                    warning_text = str(df_analyzed.iloc[i].get('Cảnh báo', ''))
-                    is_warning = len(warning_text) > 0
+                for i, coord in enumerate(lat_lons[:-1] if noi_dau_cuoi and len(lat_lons) > 2 else lat_lons):
+                    idx_in_df = valid_indices[i] if i < len(valid_indices) else valid_indices[0]
+                    warning_text = str(df_analyzed.loc[df_analyzed.index == idx_in_df, 'Cảnh báo'].values[0])
+                    is_warning = len(warning_text.strip()) > 0
                     color = 'red' if is_warning else 'blue'
                     
-                    name_col = next((col for col in df_analyzed.columns if 'hiệu' in col.lower() or 'tên' in col.lower() or 'mã' in col.lower()), None)
-                    point_name = str(df_analyzed.iloc[i][name_col]) if name_col else f"Dòng {idx_in_df + 1}"
+                    stt_val = df_analyzed.loc[df_analyzed.index == idx_in_df, 'STT'].values[0]
 
                     folium.CircleMarker(
                         location=coord, radius=8, color=color, fill=True, weight=3,
-                        tooltip=f"Mốc: {point_name} | Lỗi: {warning_text}"
+                        tooltip=f"STT: {stt_val} | Lỗi: {warning_text}"
                     ).add_to(m)
 
                 if loai_du_lieu == "Tim tuyến (Polyline)":
@@ -147,40 +154,52 @@ if uploaded_file:
                 map_data = st_folium(m, use_container_width=True, height=750, returned_objects=["last_object_clicked"])
                 
         with col_data:
-            st.subheader("📝 Hiệu chỉnh & Công cụ quét/xóa")
+            st.subheader("📝 Hiệu chỉnh & Công cụ")
             
-            # TÌM KIẾM MỐC
-            search_query = st.text_input("🔍 Tìm kiếm mốc (Tên hoặc X/Y):", "")
+            search_query = st.text_input("🔍 Tìm kiếm mốc (STT, Tên hoặc X/Y):", "")
             df_display = df_analyzed.copy()
             if search_query:
                 mask = df_display.astype(str).apply(lambda col: col.str.contains(search_query, case=False, na=False)).any(axis=1)
                 df_display = df_display[mask]
-                st.caption(f"🔍 Tìm thấy kết quả cho: **{search_query}**")
 
-            # --- CÔNG NGHỆ XÓA CỤM MỐC & MỐC NGOÀI LÃNH THỔ ---
-            with st.expander("🗑️ Công cụ Xóa mốc hàng loạt / Cụm mốc", expanded=True):
-                # Nút tự động xóa toàn bộ mốc ngoài lãnh thổ VN
-                if out_of_bounds_indices:
-                    st.warning(f"Phát hiện {len(out_of_bounds_indices)} mốc nằm ngoài lãnh thổ Việt Nam!")
-                    if st.button("🧹 Tự động xóa sạch mốc ngoài lãnh thổ", type="primary"):
-                        st.session_state['df_current'] = st.session_state['df_current'].drop(index=out_of_bounds_indices).reset_index(drop=True)
-                        st.success("Đã dọn dẹp xong các mốc lỗi ngoài lãnh thổ!")
-                        st.rerun()
+            # --- CÔNG CỤ DI CHUYỂN MỐC (TỊNH TIẾN ĐỒNG LOẠT HOẶC THEO MỐC) ---
+            with st.expander("📐 Công cụ di chuyển / Tịnh tiến mốc (Shift)", expanded=False):
+                target_row_shift = st.selectbox("Chọn STT mốc cần dịch chuyển:", options=[None] + list(df_analyzed['STT']), format_func=lambda x: f"STT {x}" if x is not None else "-- Chọn mốc (Hoặc bỏ trống để dịch tất cả) --")
+                col_dx, col_dy = st.columns(2)
+                with col_dx:
+                    delta_x = st.number_input("Cộng thêm vào X (ΔX):", value=0.0, format="%.3f")
+                with col_dy:
+                    delta_y = st.number_input("Cộng thêm vào Y (ΔY):", value=0.0, format="%.3f")
                 
-                # Công cụ chọn nhiều dòng để xóa một cụm mốc cùng lúc
-                rows_to_delete = st.multiselect(
-                    "Chọn các dòng mốc cần xóa (Cụm mốc):", 
-                    options=list(df_analyzed.index), 
-                    format_func=lambda x: f"Dòng {x+1} (X: {df_analyzed.loc[x, 'X']}, Y: {df_analyzed.loc[x, 'Y']})"
-                )
-                
-                if st.button("🔥 Xóa các mốc đã chọn", type="secondary"):
-                    if rows_to_delete:
-                        st.session_state['df_current'] = st.session_state['df_current'].drop(index=rows_to_delete).reset_index(drop=True)
-                        st.success(f"Đã xóa thành công {len(rows_to_delete)} mốc!")
+                if st.button("🚀 Thực hiện dịch chuyển mốc", type="primary"):
+                    if target_row_shift is not None:
+                        # Dịch chuyển 1 mốc cụ thể
+                        real_idx = df_analyzed[df_analyzed['STT'] == target_row_shift].index[0]
+                        st.session_state['df_current'].loc[real_idx, 'X'] += delta_x
+                        st.session_state['df_current'].loc[real_idx, 'Y'] += delta_y
+                        st.success(f"Đã dịch chuyển mốc STT {target_row_shift} thành công!")
                         st.rerun()
                     else:
-                        st.info("Vui lòng chọn ít nhất một mốc để xóa.")
+                        # Dịch chuyển toàn bộ danh sách
+                        st.session_state['df_current']['X'] += delta_x
+                        st.session_state['df_current']['Y'] += delta_y
+                        st.success("Đã tịnh tiến toàn bộ hệ thống tọa độ thành công!")
+                        st.rerun()
+
+            # XÓA MỐC / CỤM MỐC
+            with st.expander("🗑️ Công cụ Xóa mốc / Cụm mốc", expanded=False):
+                if out_of_bounds_indices:
+                    if st.button("🧹 Xóa sạch mốc ngoài lãnh thổ VN"):
+                        orig_indices_to_drop = df_analyzed.loc[out_of_bounds_indices].index.drop('STT', errors='ignore')
+                        st.session_state['df_current'] = st.session_state['df_current'].drop(index=orig_indices_to_drop).reset_index(drop=True)
+                        st.rerun()
+                
+                rows_to_delete = st.multiselect("Chọn STT các mốc cần xóa:", options=list(df_analyzed['STT']))
+                if st.button("🔥 Xóa các mốc đã chọn"):
+                    if rows_to_delete:
+                        orig_indices_to_drop = df_analyzed[df_analyzed['STT'].isin(rows_to_delete)].index
+                        st.session_state['df_current'] = st.session_state['df_current'].drop(index=orig_indices_to_drop).reset_index(drop=True)
+                        st.rerun()
 
             # BẮT SỰ KIỆN CLICK TRÊN BẢN ĐỒ
             selected_row = None
@@ -189,16 +208,17 @@ if uploaded_file:
                 clicked_lon = map_data["last_object_clicked"]["lng"]
                 
                 min_dist = float('inf')
-                for i, (lat, lon) in enumerate(lat_lons):
+                for i, (lat, lon) in enumerate(lat_lons[:-1] if noi_dau_cuoi and len(lat_lons) > 2 else lat_lons):
                     dist = (lat - clicked_lat)**2 + (lon - clicked_lon)**2
                     if dist < min_dist:
                         min_dist = dist
-                        selected_row = valid_indices[i]
+                        selected_row = valid_indices[i] if i < len(valid_indices) else valid_indices[0]
             
             if selected_row is not None:
+                stt_selected = df_analyzed.loc[df_analyzed.index == selected_row, 'STT'].values[0]
                 st.markdown(f"""
                 <div class="selected-point-box">
-                    <strong>🎯 Mốc chọn trên bản đồ: Dòng số {selected_row + 1}</strong><br>
+                    <strong>🎯 Đang chọn: STT {stt_selected}</strong><br>
                     X: <code>{df_analyzed.loc[selected_row, 'X']}</code> | Y: <code>{df_analyzed.loc[selected_row, 'Y']}</code>
                 </div>
                 """, unsafe_allow_html=True)
@@ -209,13 +229,14 @@ if uploaded_file:
                     df_display, 
                     num_rows="dynamic", 
                     use_container_width=True,
-                    disabled=["Khoảng cách (m)"]
+                    disabled=["STT", "Khoảng cách (m)"]
                 )
             
-            # XUẤT FILE SAU KHI HIỆU CHỈNH & XÓA CỤM
+            # XUẤT FILE SAU KHI HIỆU CHỈNH
             st.markdown("---")
             output = io.BytesIO()
-            export_df = edited_df.drop(columns=['Khoảng cách (m)', 'Cảnh báo'], errors='ignore')
+            # Loại bỏ các cột phụ tính toán và cột STT giả lập trước khi xuất file gốc
+            export_df = edited_df.drop(columns=['STT', 'Khoảng cách (m)', 'Cảnh báo'], errors='ignore')
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 export_df.to_excel(writer, index=False)
                 
