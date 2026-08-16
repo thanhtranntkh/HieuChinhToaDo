@@ -48,7 +48,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("🌐 Hiệu Chỉnh, Sắp Xếp Tọa Độ VN-2000 phục vụ Cấp mã đinh danh Dự Án")
+st.title("🌐 Hoàn thiện Tọa Độ VN-2000-Cấp đinh danh Dự Án")
 st.markdown("Hỗ trợ tự động phát hiện đảo trục X/Y, đứt đoạn, phân tích trái/phải và vá lỗi tuyến thông minh bằng Google Gemini AI.")
 
 @st.cache_resource
