@@ -282,7 +282,7 @@ if uploaded_file:
                         st.markdown(st.session_state['ai_advice'])
 
                 # --- NÚT TỰ ĐỘNG VÁ LỖI BẰNG THUẬT TOÁN BLOCK-MATCHING ---
-                if st.button("✨ Tự động vá lỗi & Sắp xếp toàn tuyến liền mạch", type="primary", use_container_width=True):
+                if st.button("✨ Tự động fix & Sắp xếp toàn tuyến (đối với ranh GPMB chưa hiệu quả)", type="primary", use_container_width=True):
                     with st.spinner("Đang phân tích và lắp ghép các đoạn tuyến (Block-Matching)..."):
                         df_raw = st.session_state['df_current'].copy()
                         pts = df_raw[['X', 'Y']].to_numpy()
