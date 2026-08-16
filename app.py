@@ -13,7 +13,7 @@ try:
 except ImportError:
     HAS_GENAI = False
 
-st.set_page_config(layout="wide", page_title="Hiệu Chỉnh Tọa Độ VN-2000 Pro & AI Assistant")
+st.set_page_config(layout="wide", page_title="Hiệu Chỉnh Tọa Độ VN-2000 Pro")
 
 st.markdown("""
     <style>
@@ -48,7 +48,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("🌐 Công Cụ Hiệu Chỉnh, Sắp Xếp Tọa Độ VN-2000 & Trợ Lý AI")
+st.title("🌐 Công Cụ Hiệu Chỉnh, Sắp Xếp Tọa Độ VN-2000")
 st.markdown("Hỗ trợ tự động phát hiện đảo trục X/Y, đứt đoạn, phân tích trái/phải và vá lỗi tuyến thông minh bằng Google Gemini AI.")
 
 @st.cache_resource
