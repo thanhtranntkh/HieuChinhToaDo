@@ -22,11 +22,19 @@ st.markdown("""
         border-radius: 5px;
         margin-bottom: 15px;
     }
+    .alert-box {
+        background-color: #fff3cd;
+        border-left: 5px solid #ffc107;
+        padding: 12px;
+        border-radius: 4px;
+        margin-bottom: 15px;
+        color: #856404;
+    }
     </style>
 """, unsafe_allow_html=True)
 
 st.title("🌐 Công Cụ Hiệu Chỉnh Vị Trí Toạ Độ VN-2000")
-st.markdown("Xử lý chuyên dụng cho file **Hieu Chỉnh vị trí toa do VN200 cho phù hợp** (Tích hợp Nối điểm tùy chỉnh, Xóa điểm thừa & Rà soát lặp)")
+st.markdown("Xử lý chuyên dụng cho file **Hieu Chỉnh vị trí toa do VN200 cho phù hợp** (Tích hợp Cảnh báo đứt đoạn & Nối điểm tùy chỉnh)")
 
 # --- 1. CẤU HÌNH HỆ TỌA ĐỘ (THEO QĐ 05/2007/QĐ-BTNMT) ---
 def get_vn2000_crs(kinh_tuyen_truc, mui=3):
@@ -46,39 +54,36 @@ def convert_to_wgs84(x, y, kinh_tuyen_truc):
     lon, lat = transformer.transform(y, x) 
     return lat, lon
 
-# --- 2. THUẬT TOÁN KIỂM TRA LỖI & RÀ SOÁT LẶP MỐC ---
+# --- 2. THUẬT TOÁN PHÁT HIỆN ĐỨT ĐOẠN & LỖI HÌNH HỌC ---
 def analyze_data(df, kinh_tuyen_truc):
     df['Cảnh báo'] = ""
     
+    # Phát hiện mốc lặp
     dup_mask = df.duplicated(subset=['X', 'Y'], keep=False)
-    df.loc[dup_mask, 'Cảnh báo'] += "⚠️ Phát hiện mốc bị lặp tọa độ! "
+    df.loc[dup_mask, 'Cảnh báo'] += "⚠️ Lặp tọa độ! "
 
+    # Kiểm tra đảo trục X-Y
     swap_mask = df['X'] < df['Y']
-    df.loc[swap_mask, 'Cảnh báo'] += "⚠️ X, Y có thể bị đảo ngược! "
+    df.loc[swap_mask, 'Cảnh báo'] += "⚠️ Đảo trục X-Y! "
 
     distances = [0.0]
+    broken_segments = []
+    
     for i in range(1, len(df)):
         dx = df.iloc[i]['X'] - df.iloc[i-1]['X']
         dy = df.iloc[i]['Y'] - df.iloc[i-1]['Y']
         dist = np.sqrt(dx**2 + dy**2)
         distances.append(round(dist, 2))
-        if dist < 30 and dist > 0:
-            df.at[i, 'Cảnh báo'] += f"⚠️ Gần mốc trước ({dist}m). "
-    
-    df['Khoảng cách (m)'] = distances
-
-    out_of_bounds = []
-    for idx, row in df.iterrows():
-        try:
-            lat, lon = convert_to_wgs84(row['X'], row['Y'], kinh_tuyen_truc)
-            if not (8.0 <= lat <= 24.0 and 102.0 <= lon <= 110.0):
-                df.at[idx, 'Cảnh báo'] += "🚨 Vượt ngoài lãnh thổ Việt Nam! "
-                out_of_bounds.append(idx)
-        except:
-            df.at[idx, 'Cảnh báo'] += "🚨 Lỗi tọa độ! "
-            out_of_bounds.append(idx)
+        
+        # Ngưỡng phát hiện đứt đoạn: Khoảng cách giữa 2 mốc liên tiếp quá lớn (> 200m đối với tim tuyến thông thường)
+        if dist > 200:
+            df.at[i, 'Cảnh báo'] += f"🚨 Đứt đoạn hình học ({dist}m)! "
+            broken_segments.append((i, dist))
+        elif dist < 30 and dist > 0:
+            df.at[i, 'Cảnh báo'] += f"⚠️ Quá gần ({dist}m). "
             
-    return df, out_of_bounds
+    df['Khoảng cách (m)'] = distances
+    return df, broken_segments
 
 # --- 3. THANH BÊN (SIDEBAR) ---
 with st.sidebar:
@@ -86,7 +91,6 @@ with st.sidebar:
     uploaded_file = st.file_uploader('Tải file "Hieu Chỉnh vị trí toa do VN200 cho phù hợp .xlsx"', type=['xlsx'])
     kinh_tuyen_truc = st.number_input("Kinh tuyến trục (VD: 108.25)", value=108.25, format="%.2f")
     loai_du_lieu = st.radio("Loại bản vẽ:", ["Tim tuyến (Polyline)", "Ranh GPMB (Polygon)"])
-    
     noi_dau_cuoi = st.checkbox("🔗 Tự động nối điểm đầu và điểm cuối (Khép kín ranh)", value=False)
 
 # --- 4. GIAO DIỆN CHÍNH ---
@@ -103,10 +107,20 @@ if uploaded_file:
         current_df = st.session_state['df_current'].copy()
         current_df.insert(0, 'STT', range(1, len(current_df) + 1))
 
-        df_analyzed, out_of_bounds_indices = analyze_data(current_df, kinh_tuyen_truc)
+        df_analyzed, broken_segments = analyze_data(current_df, kinh_tuyen_truc)
         
         col_map, col_data = st.columns([3, 1.2])
         
+        # --- HIỂN THỊ THÔNG BÁO ĐỨT ĐOẠN NẾU PHÁT HIỆN ---
+        with col_data:
+            if broken_segments:
+                st.markdown(f"""
+                <div class="alert-box">
+                    <strong>🚨 CẢNH BÁO ĐỨT ĐOẠN HÌNH HỌC!</strong><br>
+                    Phát hiện {len(broken_segments)} vị trí đứt đoạn khoảng cách lớn trên tuyến. Yêu cầu chọn cặp mốc để kết nối lại cho đúng thống nhất.
+                </div>
+                """, unsafe_allow_html=True)
+
         lat_lons = []
         valid_indices = []
         for idx, row in df_analyzed.iterrows():
@@ -122,8 +136,8 @@ if uploaded_file:
             lat_lons.append(lat_lons[0])
 
         with col_map:
-            st.subheader("🗺️ Bản đồ tương tác & Khắc phục đường nối")
-            st.caption("💡 Sử dụng công cụ nối tùy chỉnh bên phải để vẽ lại các đoạn nối đúng lý trình tuyến thực tế.")
+            st.subheader("🗺️ Bản đồ tương tác & Khắc phục đứt đoạn")
+            st.caption("💡 Sử dụng công cụ nối tùy chỉnh bên phải để kết nối mốc 948 với 639 hoặc các điểm đứt đoạn.")
             
             if lat_lons:
                 center_lat = sum([pt[0] for pt in lat_lons]) / len(lat_lons)
@@ -162,7 +176,7 @@ if uploaded_file:
                 else:
                     folium.Polygon(lat_lons, color="orange", fill=True, fill_opacity=0.3, weight=3).add_to(m)
 
-                # --- HIỂN THỊ CÁC ĐƯỜNG NỐI TÙY CHỈNH RIÊNG (MÀU CYAN ĐẬM) ---
+                # --- VẼ ĐƯỜNG NỐI TÙY CHỈNH (MÀU CYAN ĐẬM - NHƯ YÊU CẦU NỐI 948 VỚI 639) ---
                 if 'custom_connections' not in st.session_state:
                     st.session_state['custom_connections'] = []
 
@@ -178,10 +192,10 @@ if uploaded_file:
                         except:
                             pass
 
-                map_data = st_folium(m, use_container_width=True, height=750, returned_objects=["last_active_drawing", "last_object_clicked"])
+                map_data = st_folium(m, use_container_width=True, height=700, returned_objects=["last_active_drawing", "last_object_clicked"])
                 
         with col_data:
-            st.subheader("📝 Hiệu chỉnh & Công cụ")
+            st.subheader("📝 Hiệu chỉnh & Kết nối")
             
             search_query = st.text_input("🔍 Tìm kiếm mốc (STT, Tên hoặc X/Y):", "")
             df_display = df_analyzed.copy()
@@ -189,47 +203,36 @@ if uploaded_file:
                 mask = df_display.astype(str).apply(lambda col: col.str.contains(search_query, case=False, na=False)).any(axis=1)
                 df_display = df_display[mask]
 
-            # --- CÔNG CỤ NỐI ĐIỂM TÙY CHỈNH (VÍ DỤ: 915 NỐI 641,...) ---
-            with st.expander("🔗 Công cụ Nối tùy chỉnh 02 điểm", expanded=True):
-                st.caption("Chọn 2 mốc bất kỳ để thiết lập đường nối chính xác trên bản đồ (màu xanh cyan).")
+            # --- CÔNG CỤ CHỌN MỐC NỐI TÙY CHỈNH (VÍ DỤ: 948 NỐI 639) ---
+            with st.expander("🔗 Công cụ Kết nối mốc tùy chỉnh", expanded=True):
+                st.caption("Chọn 2 mốc bất kỳ (ví dụ mốc 948 và 639) để khắc phục đoạn đứt đoạn.")
                 all_stts = list(df_analyzed['STT'])
-                pt_a = st.selectbox("Chọn điểm bắt đầu (Điểm A):", options=[None] + all_stts, format_func=lambda x: f"STT {x}" if x is not None else "-- Chọn điểm A --")
-                pt_b = st.selectbox("Chọn điểm kết thúc (Điểm B):", options=[None] + all_stts, format_func=lambda x: f"STT {x}" if x is not None else "-- Chọn điểm B --")
+                pt_a = st.selectbox("Chọn mốc bắt đầu (A):", options=[None] + all_stts, format_func=lambda x: f"STT {x}" if x is not None else "-- Chọn mốc A --")
+                pt_b = st.selectbox("Chọn mốc kết thúc (B):", options=[None] + all_stts, format_func=lambda x: f"STT {x}" if x is not None else "-- Chọn mốc B --")
                 
                 col_btn1, col_btn2 = st.columns(2)
                 with col_btn1:
                     if st.button("➕ Thêm đường nối"):
                         if pt_a and pt_b and (pt_a, pt_b) not in st.session_state['custom_connections']:
                             st.session_state['custom_connections'].append((pt_a, pt_b))
-                            st.success(f"Đã thêm đường nối STT {pt_a} ↔ STT {pt_b}!")
+                            st.success(f"Đã nối STT {pt_a} với STT {pt_b} thành công!")
                             st.rerun()
                 with col_btn2:
-                    if st.button("🗑️ Xóa toàn bộ nối tùy chỉnh"):
+                    if st.button("🗑️ Xóa hết nối"):
                         st.session_state['custom_connections'] = []
                         st.rerun()
 
             # --- CÔNG CỤ XÓA ĐIỂM / ĐOẠN THỪA ---
             with st.expander("🗑️ Xóa điểm mốc lỗi / cắt đoạn thừa", expanded=False):
-                rows_to_delete = st.multiselect("Chọn STT các mốc cần xóa khỏi tuyến:", options=list(df_analyzed['STT']))
+                rows_to_delete = st.multiselect("Chọn STT các mốc cần xóa:", options=list(df_analyzed['STT']))
                 if st.button("🔥 Xóa các mốc đã chọn"):
                     if rows_to_delete:
                         orig_indices_to_drop = df_analyzed[df_analyzed['STT'].isin(rows_to_delete)].index
                         st.session_state['df_current'] = st.session_state['df_current'].drop(index=orig_indices_to_drop).reset_index(drop=True)
                         st.rerun()
 
-            # --- CÔNG CỤ RÀ SOÁT LẶP MỐC ---
-            with st.expander("🔍 Rà soát & Xóa mốc bị lặp", expanded=False):
-                dup_rows = df_analyzed[df_analyzed['Cảnh báo'].str.contains("lặp tọa độ")]
-                if not dup_rows.empty:
-                    if st.button("🧹 Tự động dọn dẹp mốc lặp", type="primary"):
-                        orig_dup_indices = dup_rows.index.drop('STT', errors='ignore')
-                        st.session_state['df_current'] = st.session_state['df_current'].drop(index=orig_dup_indices).reset_index(drop=True)
-                        st.rerun()
-                else:
-                    st.success("✅ Không có mốc lặp.")
-
             # BẢNG DỮ LIỆU EXCEL TRỰC TUYẾN
-            with st.container(height=300):
+            with st.container(height=280):
                 edited_df = st.data_editor(
                     df_display, 
                     num_rows="dynamic", 
