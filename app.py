@@ -281,32 +281,82 @@ if uploaded_file:
                     with st.expander("💡 Phân tích & Đề xuất từ Gemini AI", expanded=True):
                         st.markdown(st.session_state['ai_advice'])
 
-                # --- NÚT TỰ ĐỘNG VÁ LỖI BẰNG THUẬT TOÁN NEAREST NEIGHBOR ---
+                # --- NÚT TỰ ĐỘNG VÁ LỖI BẰNG THUẬT TOÁN BLOCK-MATCHING ---
                 if st.button("✨ Tự động vá lỗi & Sắp xếp toàn tuyến liền mạch", type="primary", use_container_width=True):
-                    with st.spinner("Đang tối ưu hóa thứ tự mốc toàn tuyến..."):
+                    with st.spinner("Đang phân tích và lắp ghép các đoạn tuyến (Block-Matching)..."):
                         df_raw = st.session_state['df_current'].copy()
                         pts = df_raw[['X', 'Y']].to_numpy()
+                        
                         if len(pts) > 2:
-                            unvisited = set(range(1, len(pts)))
-                            current = 0
-                            new_order = [0]
-                            while unvisited:
-                                next_pt = min(unvisited, key=lambda idx: np.linalg.norm(pts[current] - pts[idx]))
-                                new_order.append(next_pt)
-                                unvisited.remove(next_pt)
-                                current = next_pt
-                            st.session_state['df_current'] = df_raw.iloc[new_order].reset_index(drop=True)
-                            st.success("Đã tự động sắp xếp lại toàn bộ tuyến thành công!")
+                            # Bước 1: Chia dữ liệu thành các đoạn liền mạch (Block) dựa vào khoảng cách < 200m
+                            blocks = []
+                            current_block = [0]
+                            for i in range(1, len(pts)):
+                                dist = np.linalg.norm(pts[i] - pts[i-1])
+                                if dist <= 200:  # Ngưỡng liền mạch
+                                    current_block.append(i)
+                                else:
+                                    blocks.append(current_block)
+                                    current_block = [i]
+                            blocks.append(current_block)
+                            
+                            # Bước 2: Ghép nối các đoạn liền mạch với nhau theo 2 đầu mút
+                            if len(blocks) > 1:
+                                # Ưu tiên lấy đoạn dài nhất làm gốc để giữ chuẩn phương hướng
+                                blocks.sort(key=len, reverse=True)
+                                assembled_pts = blocks.pop(0)
+                                
+                                while blocks:
+                                    head = pts[assembled_pts[0]]
+                                    tail = pts[assembled_pts[-1]]
+                                    
+                                    best_dist = float('inf')
+                                    best_block_idx = -1
+                                    best_action = None 
+                                    
+                                    # So sánh 4 trường hợp nối mút: (Đuôi-Đầu), (Đuôi-Đuôi), (Đầu-Đuôi), (Đầu-Đầu)
+                                    for i, block in enumerate(blocks):
+                                        b_head = pts[block[0]]
+                                        b_tail = pts[block[-1]]
+                                        
+                                        d_tail_head = np.linalg.norm(tail - b_head)
+                                        d_tail_tail = np.linalg.norm(tail - b_tail)
+                                        d_head_tail = np.linalg.norm(head - b_tail)
+                                        d_head_head = np.linalg.norm(head - b_head)
+                                        
+                                        min_d = min(d_tail_head, d_tail_tail, d_head_tail, d_head_head)
+                                        
+                                        if min_d < best_dist:
+                                            best_dist = min_d
+                                            best_block_idx = i
+                                            if min_d == d_tail_head: best_action = 'append_tail'
+                                            elif min_d == d_tail_tail: best_action = 'reverse_append_tail'
+                                            elif min_d == d_head_tail: best_action = 'prepend_head'
+                                            elif min_d == d_head_head: best_action = 'reverse_prepend_head'
+                                    
+                                    # Lắp ráp đoạn tốt nhất vào chuỗi
+                                    best_block = blocks.pop(best_block_idx)
+                                    if best_action == 'append_tail':
+                                        assembled_pts.extend(best_block)
+                                    elif best_action == 'reverse_append_tail':
+                                        assembled_pts.extend(best_block[::-1])
+                                    elif best_action == 'prepend_head':
+                                        assembled_pts = best_block + assembled_pts
+                                    elif best_action == 'reverse_prepend_head':
+                                        assembled_pts = best_block[::-1] + assembled_pts
+                                
+                                st.session_state['df_current'] = df_raw.iloc[assembled_pts].reset_index(drop=True)
+                                st.success(f"✅ Đã tự động vá {len(broken_segments)} đoạn đứt gãy bằng thuật toán ghép khối!")
+                            else:
+                                st.success("✅ Tuyến đã liền mạch, không cần sắp xếp lại!")
                             st.rerun()
-            else:
-                if not swapped_points:
-                    st.markdown("""
-                    <div class="success-box">
-                        <strong>✅ Tuyến liền mạch và chuẩn hóa!</strong>
-                    </div>
-                    """, unsafe_allow_html=True)
 
-            st.markdown("---")
+
+
+
+
+
+
             
             # -------------------------------------------------------------
             # MODULE NÂNG CẤP: SẮP XẾP & DỜI NHIỀU MỐC CÙNG LÚC
