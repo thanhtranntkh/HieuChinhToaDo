@@ -115,7 +115,6 @@ if uploaded_file:
                     is_warning = "⚠️" in str(df_analyzed.iloc[i].get('Cảnh báo', ''))
                     color = 'red' if is_warning else 'blue'
                     
-                    # Lấy tên mốc nếu file có cột chứa tên/số hiệu mốc (VD: 'Số hiệu đỉnh thửa' hoặc 'Tên điểm')
                     name_col = next((col for col in df_analyzed.columns if 'hiệu' in col.lower() or 'tên' in col.lower() or 'mã' in col.lower()), None)
                     point_name = str(df_analyzed.iloc[i][name_col]) if name_col else f"Dòng {idx_in_df + 1}"
 
@@ -139,10 +138,9 @@ if uploaded_file:
             
             df_display = df_analyzed.copy()
             if search_query:
-                # Lọc các dòng chứa từ khóa tìm kiếm trong bất kỳ cột nào
                 mask = df_display.astype(str).apply(lambda col: col.str.contains(search_query, case=False, na=False)).any(axis=1)
                 df_display = df_display[mask]
-                st.caption( tìm thấy kết hợp cho: **{search_query}**)
+                st.caption(f"🔍 Tìm thấy kết hợp cho: **{search_query}**")
 
             # --- TÍNH NĂNG 2: XÓA MỐC TỌA ĐỘ ---
             st.markdown("🗑️ **Công cụ xóa mốc:** Chọn số thứ tự dòng để xóa khỏi danh sách.")
@@ -185,9 +183,6 @@ if uploaded_file:
                     use_container_width=True,
                     disabled=["Khoảng cách (m)"]
                 )
-            
-            # Cập nhật lại dữ liệu session nếu có chỉnh sửa trực tiếp trên bảng
-            # (Đồng bộ hóa dữ liệu chỉnh sửa thủ công vào state chung)
             
             # XUẤT FILE SAU KHI HIỆU CHỈNH & XÓA MỐC
             st.markdown("---")
