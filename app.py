@@ -7,17 +7,14 @@ from folium import plugins
 from streamlit_folium import st_folium
 import io
 
-# Tích hợp Google GenAI an toàn (không bị sập app nếu chưa cài thư viện)
 try:
     from google import genai
     HAS_GENAI = True
 except ImportError:
     HAS_GENAI = False
 
-# Tối ưu hóa cấu hình giao diện Streamlit
 st.set_page_config(layout="wide", page_title="Hiệu Chỉnh Tọa Độ VN-2000 Pro & AI Assistant")
 
-# --- CSS TÙY CHỈNH GIAO DIỆN ---
 st.markdown("""
     <style>
     .stDataFrame { width: 100%; }
@@ -52,9 +49,8 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("🌐 Công Cụ Hiệu Chỉnh, Sắp Xếp Tọa Độ VN-2000 & Trợ Lý AI")
-st.markdown("Hỗ trợ click chọn mốc trên bản đồ, tự động kiểm tra đảo trục X/Y, đứt đoạn, sắp xếp lý trình và phân tích trái/phải bằng Google Gemini AI.")
+st.markdown("Hỗ trợ tự động phát hiện đảo trục X/Y, đứt đoạn, phân tích trái/phải và vá lỗi tuyến thông minh bằng Google Gemini AI.")
 
-# --- 1. CẤU HÌNH HỆ TỌA ĐỘ VN-2000 ---
 @st.cache_resource
 def get_vn2000_crs(kinh_tuyen_truc, mui=3):
     k_factor = 0.9999 if mui == 3 else 0.9996
@@ -73,7 +69,6 @@ def convert_to_wgs84_vectorized(x_arr, y_arr, kinh_tuyen_truc):
     lons, lats = transformer.transform(y_arr, x_arr)
     return lats, lons
 
-# --- 2. THUẬT TOÁN PHÁT HIỆN LỖI (ĐẢO TRỤC, LẶP, ĐỨT ĐOẠN) ---
 def analyze_data(df, kinh_tuyen_truc):
     df = df.copy()
     df['Cảnh báo'] = ""
@@ -110,12 +105,11 @@ def analyze_data(df, kinh_tuyen_truc):
             
     return df, broken_segments, swapped_points
 
-# --- 3. HÀM TÍCH HỢP GEMINI AI PHÂN TÍCH HƯỚNG TRÁI / PHẢI ---
 def ask_gemini_for_direction(broken_info_text, kinh_tuyen_truc, api_key):
     if not HAS_GENAI:
-        return "⚠️ Thư viện `google-genai` chưa được cài đặt trong môi trường Streamlit. Vui lòng thêm `google-genai` vào file `requirements.txt`."
+        return "⚠️ Thư viện `google-genai` chưa được cài đặt."
     if not api_key:
-        return "⚠️ Vui lòng nhập Google Gemini API Key ở thanh bên (sidebar) để sử dụng tính năng phân tích thông minh."
+        return "⚠️ Vui lòng nhập Google Gemini API Key ở thanh bên (sidebar)."
     try:
         client = genai.Client(api_key=api_key)
         prompt = f"""
@@ -135,7 +129,6 @@ def ask_gemini_for_direction(broken_info_text, kinh_tuyen_truc, api_key):
     except Exception as e:
         return f"Lỗi kết nối Gemini API: {e}"
 
-# --- 4. THANH BÊN (SIDEBAR) ---
 with st.sidebar:
     st.header("⚙️ Thông số đầu vào")
     uploaded_file = st.file_uploader('Tải file Excel tọa độ (.xlsx)', type=['xlsx'])
@@ -145,9 +138,8 @@ with st.sidebar:
     
     st.markdown("---")
     st.header("🤖 Trợ lý Google Gemini AI")
-    gemini_api_key = st.text_input("Nhập Gemini API Key:", type="password", help="Lấy API Key miễn phí tại Google AI Studio")
+    gemini_api_key = st.text_input("Nhập Gemini API Key:", type="password")
 
-# --- 5. XỬ LÝ DỮ LIỆU & GIAO DIỆN CHÍNH ---
 if uploaded_file:
     try:
         raw_df = pd.read_excel(uploaded_file)
@@ -212,18 +204,15 @@ if uploaded_file:
 
                     if st.session_state.get('selected_point_a') == stt_val:
                         color = 'green'
-                        tooltip_extra = " [ĐÃ CHỌN MỐC A]"
                     elif st.session_state.get('selected_point_b') == stt_val:
                         color = 'orange'
-                        tooltip_extra = " [ĐÃ CHỌN MỐC B]"
                     else:
                         color = 'red' if len(warning_text.strip()) > 0 else 'blue'
-                        tooltip_extra = ""
 
                     folium.CircleMarker(
                         location=coord, radius=8, color=color, fill=True, fill_color=color, fill_opacity=0.8, weight=2,
                         popup=f"STT: {stt_val} | Tên: {point_label}",
-                        tooltip=f"Mốc: {point_label} (STT {stt_val}){tooltip_extra} | {warning_text}"
+                        tooltip=f"Mốc: {point_label} (STT {stt_val}) | {warning_text}"
                     ).add_to(m)
 
                 if loai_du_lieu == "Tim tuyến (Polyline)":
@@ -252,16 +241,14 @@ if uploaded_file:
         with col_data:
             st.subheader("📝 Công cụ Hiệu chỉnh & AI")
             
-            # --- HIỂN THỊ CẢNH BÁO ĐẢO TRỤC X/Y ---
             if swapped_points:
                 st.markdown(f"""
                 <div class="alert-box">
-                    <strong>⚠️ PHÁT HIỆN {len(swapped_points)} MỐC ĐẢO TRỤC X/Y!</strong><br>
-                    Các STT bị đảo trục: {swapped_points[:10]}{'...' if len(swapped_points)>10 else ''}
+                    <strong>⚠️ PHÁT HIỆN {len(swapped_points)} MỐC ĐẢO TRỤC X/Y!</strong>
                 </div>
                 """, unsafe_allow_html=True)
                 
-                if st.button("🔄 Tự động hoán đổi lại X và Y cho các mốc này", use_container_width=True):
+                if st.button("🔄 Hoán đổi X và Y tự động", use_container_width=True):
                     current_raw = st.session_state['df_current'].copy()
                     for pt in swapped_points:
                         idx = pt - 1
@@ -269,7 +256,7 @@ if uploaded_file:
                         current_raw.at[idx, 'X'] = current_raw.at[idx, 'Y']
                         current_raw.at[idx, 'Y'] = temp_val
                     st.session_state['df_current'] = current_raw
-                    st.success("Đã hoán đổi thành công tọa độ X và Y cho các mốc bị lỗi!")
+                    st.success("Đã hoán đổi X và Y thành công!")
                     st.rerun()
 
             if broken_segments:
@@ -279,25 +266,39 @@ if uploaded_file:
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # Nút gọi Gemini AI phân tích Trái/Phải
                 if st.button("🤖 Nhờ Gemini AI phân tích Hướng Trái / Phải", type="primary", use_container_width=True):
                     if not HAS_GENAI:
-                        st.warning("⚠️ Thư viện `google-genai` chưa được cài trên server. Vui lòng thêm `google-genai` vào file `requirements.txt`.")
+                        st.warning("⚠️ Thư viện `google-genai` chưa được cài trên server.")
                     else:
-                        with st.spinner("Gemini đang phân tích hướng tuyến và không gian hình học..."):
+                        with st.spinner("Gemini đang phân tích hướng tuyến..."):
                             summary_text = ""
                             for b in broken_segments[:15]:
-                                stt_from = b['from_idx'] + 1
-                                stt_to = b['to_idx'] + 1
-                                dist = b['distance']
-                                summary_text += f"- Đoạn từ STT {stt_from} đến STT {stt_to}: Khoảng cách đứt đoạn = {dist}m\n"
-                            
+                                summary_text += f"- Đoạn từ STT {b['from_idx']+1} đến STT {b['to_idx']+1}: Khoảng cách = {b['distance']}m\n"
                             ai_advice = ask_gemini_for_direction(summary_text, kinh_tuyen_truc, gemini_api_key)
                             st.session_state['ai_advice'] = ai_advice
                 
                 if 'ai_advice' in st.session_state:
                     with st.expander("💡 Phân tích & Đề xuất từ Gemini AI", expanded=True):
                         st.markdown(st.session_state['ai_advice'])
+
+                # --- NÚT TỰ ĐỘNG VÁ LỖI BẰNG THUẬT TOÁN NEAREST NEIGHBOR ---
+                if st.button("✨ Tự động vá lỗi & Sắp xếp toàn tuyến liền mạch", type="primary", use_container_width=True):
+                    with st.spinner("Đang tối ưu hóa thứ tự mốc toàn tuyến..."):
+                        df_raw = st.session_state['df_current'].copy()
+                        pts = df_raw[['X', 'Y']].to_numpy()
+                        if len(pts) > 2:
+                            # Thuật toán Nearest Neighbor TSP-like cho chuỗi tuyến hở
+                            unvisited = set(range(1, len(pts)))
+                            current = 0
+                            new_order = [0]
+                            while unvisited:
+                                next_pt = min(unvisited, key=lambda idx: np.linalg.norm(pts[current] - pts[idx]))
+                                new_order.append(next_pt)
+                                unvisited.remove(next_pt)
+                                current = next_pt
+                            st.session_state['df_current'] = df_raw.iloc[new_order].reset_index(drop=True)
+                            st.success("Đã tự động sắp xếp lại toàn bộ tuyến thành công!")
+                            st.rerun()
             else:
                 if not swapped_points:
                     st.markdown("""
@@ -309,7 +310,6 @@ if uploaded_file:
             st.markdown("---")
             st.write("🎯 **Trạng thái chọn mốc tương tác:**")
             col_a_disp, col_b_disp = st.columns(2)
-            
             with col_a_disp:
                 pt_a_val = st.session_state.get('selected_point_a')
                 st.metric("Mốc A (Trước)", f"STT {pt_a_val}" if pt_a_val else "Chưa chọn")
@@ -322,58 +322,31 @@ if uploaded_file:
                 st.session_state['selected_point_b'] = None
                 st.rerun()
 
-            with st.expander("🚀 Thực hiện Sắp xếp lại lý trình tuyến", expanded=True):
-                st.caption("Dời Mốc B nằm ngay sau Mốc A để khắc phục đứt đoạn.")
-                
-                choices = []
-                for idx, row in df_analyzed.iterrows():
-                    lbl = f"STT {row['STT']}" + (f" - {row[name_col]}" if name_col and pd.notna(row[name_col]) else "")
-                    choices.append((row['STT'], lbl))
-                
+            with st.expander("🚀 Sắp xếp thủ công Mốc B sau Mốc A", expanded=False):
+                choices = [(row['STT'], f"STT {row['STT']}") for idx, row in df_analyzed.iterrows()]
                 stt_options = [item[0] for item in choices]
-                format_func = lambda x: next((item[1] for item in choices if item[0] == x), str(x)) if x else "-- Chọn mốc --"
+                format_func = lambda x: f"STT {x}" if x else "-- Chọn mốc --"
 
-                manual_a = st.selectbox("Hoặc chọn mốc A:", options=[None] + stt_options, format_func=format_func, index=0 if not st.session_state.get('selected_point_a') else stt_options.index(st.session_state.get('selected_point_a'))+1)
-                manual_b = st.selectbox("Hoặc chọn mốc B:", options=[None] + stt_options, format_func=format_func, index=0 if not st.session_state.get('selected_point_b') else stt_options.index(st.session_state.get('selected_point_b'))+1)
+                manual_a = st.selectbox("Mốc A:", options=[None] + stt_options, format_func=format_func)
+                manual_b = st.selectbox("Mốc B:", options=[None] + stt_options, format_func=format_func)
                 
                 if manual_a: st.session_state['selected_point_a'] = manual_a
                 if manual_b: st.session_state['selected_point_b'] = manual_b
 
-                if st.button("✨ Xác nhận Dời & Sắp xếp tuyến", type="primary", use_container_width=True):
+                if st.button("Xác nhận Dời mốc", use_container_width=True):
                     pa = st.session_state.get('selected_point_a')
                     pb = st.session_state.get('selected_point_b')
-                    if pa and pb:
-                        if pa == pb:
-                            st.warning("Mốc A và mốc B phải là hai mốc khác nhau!")
-                        else:
-                            current_raw = st.session_state['df_current'].copy()
-                            idx_a = pa - 1
-                            idx_b = pb - 1
-                            
-                            if 0 <= idx_a < len(current_raw) and 0 <= idx_b < len(current_raw):
-                                row_b = current_raw.iloc[idx_b:idx_b+1]
-                                current_raw = current_raw.drop(index=idx_b).reset_index(drop=True)
-                                
-                                new_idx_a = pa - 1 if idx_b > idx_a else pa
-                                
-                                part1 = current_raw.iloc[:new_idx_a]
-                                part2 = current_raw.iloc[new_idx_a:]
-                                
-                                st.session_state['df_current'] = pd.concat([part1, row_b, part2]).reset_index(drop=True)
-                                st.session_state['selected_point_a'] = None
-                                st.session_state['selected_point_b'] = None
-                                st.success(f"Đã tự động sắp xếp thành công! Mốc B (STT {pb}) đã được dời lên liền sau Mốc A (STT {pa}).")
-                                st.rerun()
-                    else:
-                        st.warning("Vui lòng chọn đầy đủ Mốc A và Mốc B.")
-
-            with st.expander("🗑️ Xóa điểm mốc lỗi / đoạn thừa", expanded=False):
-                rows_to_delete = st.multiselect("Chọn STT các mốc cần xóa khỏi tuyến:", options=list(df_analyzed['STT']))
-                if st.button("🔥 Xóa các mốc đã chọn"):
-                    if rows_to_delete:
-                        orig_indices_to_drop = df_analyzed[df_analyzed['STT'].isin(rows_to_delete)].index - 1
-                        st.session_state['df_current'] = st.session_state['df_current'].drop(index=orig_indices_to_drop).reset_index(drop=True)
-                        st.success("Đã xóa các mốc được chọn!")
+                    if pa and pb and pa != pb:
+                        current_raw = st.session_state['df_current'].copy()
+                        row_b = current_raw.iloc[pb-1:pb].copy()
+                        current_raw = current_raw.drop(index=pb-1).reset_index(drop=True)
+                        new_idx_a = pa - 1 if (pb - 1) > (pa - 1) else pa
+                        part1 = current_raw.iloc[:new_idx_a]
+                        part2 = current_raw.iloc[new_idx_a:]
+                        st.session_state['df_current'] = pd.concat([part1, row_b, part2]).reset_index(drop=True)
+                        st.session_state['selected_point_a'] = None
+                        st.session_state['selected_point_b'] = None
+                        st.success("Đã dời mốc thành công!")
                         st.rerun()
 
             with st.container(height=240):
