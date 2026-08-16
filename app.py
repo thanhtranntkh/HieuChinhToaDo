@@ -308,45 +308,63 @@ if uploaded_file:
                     """, unsafe_allow_html=True)
 
             st.markdown("---")
-            st.write("🎯 **Trạng thái chọn mốc tương tác:**")
-            col_a_disp, col_b_disp = st.columns(2)
-            with col_a_disp:
-                pt_a_val = st.session_state.get('selected_point_a')
-                st.metric("Mốc A (Trước)", f"STT {pt_a_val}" if pt_a_val else "Chưa chọn")
-            with col_b_disp:
-                pt_b_val = st.session_state.get('selected_point_b')
-                st.metric("Mốc B (Sau)", f"STT {pt_b_val}" if pt_b_val else "Chưa chọn")
-
-            if st.button("🔄 Đặt lại lựa chọn A & B", use_container_width=True):
-                st.session_state['selected_point_a'] = None
-                st.session_state['selected_point_b'] = None
-                st.rerun()
-
-            with st.expander("🚀 Sắp xếp thủ công Mốc B sau Mốc A", expanded=False):
+            
+            # -------------------------------------------------------------
+            # MODULE NÂNG CẤP: SẮP XẾP & DỜI NHIỀU MỐC CÙNG LÚC
+            # -------------------------------------------------------------
+            with st.expander("🚀 Sắp xếp & Dời NHIỀU MỐC cùng lúc", expanded=True):
+                st.caption("Chọn nhiều mốc và dời chúng về trước hoặc sau một mốc đích, kèm tùy chọn thứ tự sắp xếp.")
+                
                 choices = [(row['STT'], f"STT {row['STT']}") for idx, row in df_analyzed.iterrows()]
                 stt_options = [item[0] for item in choices]
                 format_func = lambda x: f"STT {x}" if x else "-- Chọn mốc --"
 
-                manual_a = st.selectbox("Mốc A:", options=[None] + stt_options, format_func=format_func)
-                manual_b = st.selectbox("Mốc B:", options=[None] + stt_options, format_func=format_func)
+                col_multi1, col_multi2 = st.columns(2)
                 
-                if manual_a: st.session_state['selected_point_a'] = manual_a
-                if manual_b: st.session_state['selected_point_b'] = manual_b
-
-                if st.button("Xác nhận Dời mốc", use_container_width=True):
-                    pa = st.session_state.get('selected_point_a')
-                    pb = st.session_state.get('selected_point_b')
-                    if pa and pb and pa != pb:
+                with col_multi1:
+                    points_to_move = st.multiselect("1. Chọn các mốc cần dời:", options=stt_options, format_func=format_func)
+                    sort_order = st.radio("2. Thứ tự sắp xếp các mốc được dời:", ["Từ nhỏ đến lớn", "Từ lớn đến nhỏ"])
+                
+                with col_multi2:
+                    target_point = st.selectbox("3. Chọn mốc đích:", options=[None] + stt_options, format_func=format_func)
+                    position = st.radio("4. Vị trí chèn:", ["Đứng TRƯỚC mốc đích", "Đứng SAU mốc đích"])
+                
+                if st.button("✨ Xác nhận Dời nhiều mốc", type="primary", use_container_width=True):
+                    if not points_to_move:
+                        st.warning("Vui lòng chọn ít nhất 1 mốc cần dời!")
+                    elif not target_point:
+                        st.warning("Vui lòng chọn mốc đích!")
+                    elif target_point in points_to_move:
+                        st.warning("Mốc đích không được nằm trong danh sách các mốc cần dời!")
+                    else:
                         current_raw = st.session_state['df_current'].copy()
-                        row_b = current_raw.iloc[pb-1:pb].copy()
-                        current_raw = current_raw.drop(index=pb-1).reset_index(drop=True)
-                        new_idx_a = pa - 1 if (pb - 1) > (pa - 1) else pa
-                        part1 = current_raw.iloc[:new_idx_a]
-                        part2 = current_raw.iloc[new_idx_a:]
-                        st.session_state['df_current'] = pd.concat([part1, row_b, part2]).reset_index(drop=True)
+                        
+                        # Tách ra các mốc cần dời
+                        rows_to_move = current_raw[current_raw['STT'].isin(points_to_move)].copy()
+                        
+                        # Áp dụng sắp xếp cho các mốc này (Nhỏ -> Lớn hoặc Lớn -> Nhỏ)
+                        ascending = True if sort_order == "Từ nhỏ đến lớn" else False
+                        rows_to_move = rows_to_move.sort_values(by='STT', ascending=ascending)
+                        
+                        # Xóa các mốc cần dời khỏi Dataframe gốc
+                        current_raw = current_raw[~current_raw['STT'].isin(points_to_move)].reset_index(drop=True)
+                        
+                        # Tìm vị trí index mới của mốc đích (sau khi đã xóa đi các mốc phía trên)
+                        target_idx = current_raw[current_raw['STT'] == target_point].index[0]
+                        
+                        # Xác định index để chèn vào Dataframe
+                        insert_idx = target_idx if position == "Đứng TRƯỚC mốc đích" else target_idx + 1
+                        
+                        # Cắt Dataframe và chèn mảng mới vào giữa
+                        part1 = current_raw.iloc[:insert_idx]
+                        part2 = current_raw.iloc[insert_idx:]
+                        
+                        st.session_state['df_current'] = pd.concat([part1, rows_to_move, part2]).reset_index(drop=True)
+                        st.success(f"Đã dời thành công {len(points_to_move)} mốc đến vị trí yêu cầu!")
+                        
+                        # Reset lựa chọn trên bản đồ
                         st.session_state['selected_point_a'] = None
                         st.session_state['selected_point_b'] = None
-                        st.success("Đã dời mốc thành công!")
                         st.rerun()
 
             with st.container(height=240):
